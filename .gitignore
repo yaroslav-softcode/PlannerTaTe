@@ -12,6 +12,7 @@ node_modules/
 # Внутренние записи и рабочая папка проверок (в публикацию не идут)
 README_STATE.md
 ОПИСАНИЕ.md
+ОПИСАНИЕ_картинки/
 frontend/workspace/
 frontend/*.png
 
