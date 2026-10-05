@@ -1,6 +1,6 @@
 # PlannerTaTe
 
-**A task planner where your plan is a map, not a list.** Tasks live as cards on an endless canvas, and you link them into a graph — so you can see what a project is made of, what depends on what, and what is in progress right now.
+**Free task planner where your plan is a map, not a list.** Tasks live as cards on an endless canvas, and you link them into a graph — so you can see what a project is made of, what depends on what, and what is in progress right now.
 
 Windows desktop application + Android companion, connected over your own home network. Everything is stored locally: no cloud, no account, no telemetry.
 
@@ -90,7 +90,7 @@ MIT — see [LICENSE](LICENSE). © Yaroslav Khmelev.
 
 # PlannerTaTe
 
-**Планировщик задач, в котором план — это карта, а не список.** Задачи живут карточками на бесконечном холсте, а вы соединяете их связями: видно, из чего состоит дело, что от чего зависит и что в работе прямо сейчас.
+**Бесплатный планировщик задач, в котором план — это карта.** Задачи живут карточками на бесконечном холсте, а вы соединяете их связями: видно, из чего состоит дело, что от чего зависит и что в работе прямо сейчас.
 
 Приложение для Windows и приложение-спутник для Android, связанные через вашу домашнюю сеть. Всё хранится локально: без облака, без учётной записи, без телеметрии.
 
@@ -102,7 +102,7 @@ MIT — see [LICENSE](LICENSE). © Yaroslav Khmelev.
 
 **Не даёт забыть.** У карточки ставится срок и напоминание: в назначенный час компьютер показывает уведомление Windows, а телефон (или планшет) звонит настоящим будильником — даже если приложение закрыто или устройство перезагружалось.
 
-**Держит устройства в курсе.** Приложение на телефоне хранит копию плана (можно смотреть без компьютера) и умеет добавлять новые задачи; при синхронизации всё сходится с компьютером.
+**Держит устройства в курсе.** Приложение на телефоне хранит копию плана (можно смотреть без компьютера) и умеет добавлять новые задачи; синхронизация с компьютером.
 
 ## Как это работает
 
