@@ -50,7 +50,7 @@ Everything is kept in `%APPDATA%\PlannerTaTe` on your computer: the plan (`graph
 | `Запустить PlannerTaTe.bat` | run straight from the sources without building |
 | `frontend/` | the interface: Vue 3 + Vite + LiteGraph (cards drawn on a `<canvas>`) |
 | `app/PlannerTaTe.apk` | ready Android build of the companion app |
-| `ПАМЯТКА.*`, `ОПИСАНИЕ_ФУНКЦИЙ.*` | documentation for the user (Russian) |
+| `ПАМЯТКА.html`/`.pdf`, `ОПИСАНИЕ_ФУНКЦИЙ.md`/`.pdf` | documentation for the user (Russian) |
 | `PlannerTaTe.spec`, `PlannerTaTe.iss`, `PlannerTaTe_version.txt`, `PlannerTaTe.ico` | the Windows build (PyInstaller + Inno Setup) |
 | `mcp/` | optional: 17 tools that let an AI agent read and fill the plan |
 | `make_icon.py` | draws `PlannerTaTe.ico` |
@@ -139,7 +139,7 @@ MIT — see [LICENSE](LICENSE). © Yaroslav Khmelev.
 | `Запустить PlannerTaTe.bat` | запуск прямо из исходников, без сборки |
 | `frontend/` | интерфейс: Vue 3 + Vite + LiteGraph (карточки рисуются на `<canvas>`) |
 | `app/PlannerTaTe.apk` | готовая сборка приложения для телефона |
-| `ПАМЯТКА.*`, `ОПИСАНИЕ_ФУНКЦИЙ.*` | документация для пользователя |
+| `ПАМЯТКА.html`/`.pdf`, `ОПИСАНИЕ_ФУНКЦИЙ.md`/`.pdf` | документация для пользователя |
 | `PlannerTaTe.spec`, `PlannerTaTe.iss`, `PlannerTaTe_version.txt`, `PlannerTaTe.ico` | сборка для Windows (PyInstaller + Inno Setup) |
 | `mcp/` | дополнительно: 17 инструментов, которыми ИИ-агент читает и заполняет план |
 | `make_icon.py` | рисует `PlannerTaTe.ico` |
