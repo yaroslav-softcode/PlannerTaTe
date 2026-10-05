@@ -84,7 +84,7 @@ Python 3.12 + Flask · Vue 3 + Vite + LiteGraph.js (canvas) · PyInstaller + Inn
 
 ## License
 
-Proprietary software. All rights reserved © Yaroslav Khmelev.
+MIT — see [LICENSE](LICENSE). © Yaroslav Khmelev.
 
 ---
 
@@ -174,4 +174,4 @@ Python 3.12 + Flask · Vue 3 + Vite + LiteGraph.js (canvas) · PyInstaller + Inn
 
 ## Лицензия
 
-Проприетарное ПО. Все права защищены © Ярослав Хмелев.
+MIT — см. [LICENSE](LICENSE). © Ярослав Хмелев.
