@@ -1,0 +1,66 @@
+# Сборки и кэш — в репозиторий не нужны (пересобираются)
+build/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+node_modules/
+
+# Внутренние записи и рабочая папка проверок (в публикацию не идут)
+README_STATE.md
+ОПИСАНИЕ.md
+frontend/workspace/
+frontend/*.png
+
+# Личные данные и состояние — НИКОГДА в репозиторий
+graph.json
+graph.json.*
+ui_state.json
+license.json
+license.json.*
+notify_state.json
+phone_tasks.json
+backend_run.log
+install_backup_*/
+mcp/snapshots/
+
+# Готовое приложение для телефона: пересобирается, но нужно для установки
+*.apk
+!app/PlannerTaTe.apk
+
+# Локальные копии данных, бэкапы и журналы
+access_key.txt
+*.bak
+*.bak_*
+*.log
+*.tmp
+
+# Снимки и служебные дампы разработки (история — в git не нужны)
+frontend/workspace/backup_*/
+frontend/workspace/removed_themes_*/
+frontend/workspace/served_check.js
+frontend/workspace/*.png
+frontend/workspace/**/*.png
+frontend/workspace/links_before/
+frontend/workspace/links_after/
+frontend/workspace/workspace/
+
+# Окружения Python
+.venv/
+venv/
+env/
+
+# Настройки редакторов и системный мусор
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+desktop.ini
+
+# Секреты — на всякий случай, если появятся
+.env
+*.pem
+*.key

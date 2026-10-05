@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>PlannerTaTe — памятка</title>
+<style>
+  /* Лист по высоте памятки (210×220 мм): пустого белого низа нет, а на A4 печатается как есть. */
+  @page { size: 210mm 220mm; margin: 14mm 14mm 12mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; color: #14171f; font-size: 9.6pt; line-height: 1.34; }
+  h1 { font-size: 16pt; margin: 0 0 1mm; letter-spacing: -0.2px; }
+  h1 .ma { color: #8168ff; }
+  h1 .te { color: #229ed9; }
+  .sub { color: #5a6273; margin: 0 0 3mm; font-size: 9pt; line-height: 1.3; }
+  h2 { font-size: 10.6pt; margin: 3mm 0 1.4mm; padding-bottom: 0.7mm; border-bottom: 1.1px solid #e3e6ee; }
+  h2 .n { display: inline-block; width: 5mm; height: 5mm; line-height: 5mm; text-align: center;
+          background: #8168ff; color: #fff; border-radius: 50%; font-size: 8pt; margin-right: 1.6mm; }
+  h2 .n.two { background: #229ed9; }
+  ol { margin: 0 0 0 4mm; padding-left: 3.6mm; }
+  li { margin-bottom: 0.9mm; }
+  b { color: #14171f; }
+  code { background: #f1f2f7; padding: 0.2mm 1mm; border-radius: 2px; font-size: 9.2pt; }
+  .box { border: 1.1px solid #e3e6ee; border-radius: 2.4mm; padding: 2mm 2.8mm; margin: 2.2mm 0 0; background: #fafbff; }
+  .box.tip { border-color: #cfe6f5; background: #f4fbff; }
+  table { border-collapse: collapse; width: 100%; font-size: 9.3pt; }
+  td { padding: 0.7mm 0; vertical-align: top; }
+  td:first-child { color: #5a6273; width: 33%; padding-right: 2mm; }
+  .foot { margin-top: 3mm; padding-top: 1.6mm; border-top: 1.1px solid #e3e6ee; color: #5a6273; font-size: 8.6pt; line-height: 1.3; }
+  .qr-note { color: #5a6273; }
+  /* На экране памятка тоже выглядит листом, а не растянутой строкой на всю ширину окна. */
+  @media screen { body { max-width: 205mm; margin: 0 auto; background: #fff; } }
+</style>
+</head>
+<body>
+
+<h1>Planer<span class="ma">Ma</span><span class="te">Te</span> — планировщик задач</h1>
+<p class="sub">Памятка: как поставить программу на компьютер и приложение на телефон. Основная программа работает на компьютере, телефон с ней синхронизируется.</p>
+
+<h2><span class="n">1</span>Программа на компьютере</h2>
+<ol>
+  <li>Запустите <b>PlannerTaTe_Setup_1.1.exe</b> и пройдите установку (права администратора не нужны).</li>
+  <li>Windows спросит про доступ к сети — выберите <b>«Разрешить»</b> для частных сетей. Без этого телефон не подключится.</li>
+  <li>Откроется планировщик. Программа живёт в трее — маленький значок рядом с часами: через него открыть планировщик, посмотреть адрес и ключ для телефона, выйти.</li>
+</ol>
+
+<h2><span class="n two">2</span>Приложение на телефоне</h2>
+<ol>
+  <li>Телефон и компьютер должны быть в <b>одной сети Wi-Fi</b>.</li>
+  <li>На компьютере откройте <b>«Адрес и ключ для телефона»</b> (правый щелчок по значку в трее, либо панель в самом планировщике). Там будут адрес, ключ и QR-код.</li>
+  <li>На телефоне отсканируйте QR-код <span class="qr-note">или откройте в браузере адрес вида <code>http://192.168.x.x:5001/apk</code></span> — начнётся скачивание приложения.</li>
+  <li>Установите его. Android спросит про установку из неизвестного источника — <b>разрешите</b> для браузера.</li>
+  <li>Откройте приложение: компьютер оно найдёт само, нужно ввести <b>ключ</b> с шага 2 — и он сохранится, больше вводить не придётся.</li>
+</ol>
+
+<h2>Как это работает</h2>
+<div class="two">
+  <div>
+    <table>
+      <tr><td>Синхронизация</td><td>сама, три раза в день: <b>07:00, 14:00, 21:00</b>, когда обе части в одной сети</td></tr>
+      <tr><td>Что переносится</td><td>карточки и напоминания с компьютера — на телефон и обратно</td></tr>
+      <tr><td>Напоминания</td><td>звучат на телефоне со звуком будильника, даже если приложение закрыто</td></tr>
+      <tr><td>Интернет</td><td>не нужен: всё работает внутри домашнего Wi-Fi</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="box">
+  <b>Что можно и чего нельзя на телефоне.</b> Можно создавать новые карточки и напоминания — при первой удачной синхронизации они уедут на компьютер.
+  Изменять существующие карточки на телефоне нельзя: это может разойтись с правками на компьютере. Изменения делайте на компьютере — телефон их подхватит.
+</div>
+
+<div class="box tip">
+  <b>Если телефон не подключается:</b> проверьте, что Wi-Fi один и тот же, что программа на компьютере запущена (значок в трее) и что в брандмауэре Windows ей разрешён доступ к частным сетям. Ключ и адрес всегда можно посмотреть заново в трее — «Адрес и ключ для телефона».
+</div>
+
+<p class="foot">
+  Данные (карточки, напоминания, ключ) хранятся только на ваших устройствах: <code>%APPDATA%\PlannerTaTe</code> на компьютере — ничего никуда не отправляется.
+  Требования: Windows 10 или новее, телефон на Android 8.0 или новее.
+</p>
+
+</body>
+</html>
