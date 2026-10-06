@@ -16,6 +16,9 @@ import time
 import secrets
 import socket
 import subprocess
+import hashlib
+import threading
+import urllib.request
 from flask import Flask, request, jsonify, send_from_directory, Response, send_file, redirect
 
 # --- Где что лежит (нужно для собранного PlannerTaTe.exe, 03.10.26) --------------------------
@@ -864,6 +867,16 @@ def api_restore():
 # не бывает — поэтому и разбора конфликтов не нужно.
 PHONE_TASKS_FILE = os.path.join(BASE_DIR, "phone_tasks.json")
 
+# --- Раздельные номера для карточек с устройств (просьба Ярослава 06.10.26) ------------------
+# Задачи с телефона и планшета нумеруются в СВОИХ диапазонах, чтобы номера компьютера и
+# устройств не могли совпасть: пока страница на компьютере открыта и не перезагружена, её
+# новая карточка могла занять номер только что приехавшей задачи — и задача терялась при
+# слиянии (найдено тестом 06.10.26). Компьютер продолжает нумеровать с единицы, как раньше;
+# номера нигде не показываются — диапазоны нужны только для защиты от совпадений.
+PHONE_ID_BASE = 1000000     # телефон:  1 000 001, 1 000 002, ...
+TABLET_ID_BASE = 2000000    # планшет:  2 000 001, 2 000 002, ...
+DEV_LINK_BASE = 3000000     # связи, созданные вместе с задачами устройств
+
 
 def _phone_tasks_load():
     if not os.path.exists(PHONE_TASKS_FILE):
@@ -921,15 +934,31 @@ def _merge_phone_tasks(graph):
                 links.append(l)
                 have_link.add(l[0])
                 fresh = True
+                # Зеркало у ИСТОЧНИКА: если источник связи уже живёт в графе браузера
+                # (например, панель устройства), дописываем номер связи в его выходной порт —
+                # иначе после перезагрузки линия «панель → задача» не нарисуется (урок о зеркалах).
+                _src = next((n for n in nodes if n.get("id") == l[1]), None)
+                if _src is not None:
+                    _outs = _src.get("outputs") or []
+                    if _outs:
+                        _cur = _outs[0].get("links")
+                        _cur = list(_cur) if isinstance(_cur, list) else []
+                        if l[0] not in _cur:
+                            _cur.append(l[0])
+                        _outs[0]["links"] = _cur
         if fresh:
             changed = True
             left[key] = rec                      # ещё не усвоено — держим дальше
     if changed:
         graph["nodes"] = nodes
         graph["links"] = links
-        graph["last_node_id"] = max([int(graph.get("last_node_id") or 0)] + [int(n.get("id") or 0) for n in nodes])
-        if have_link:
-            graph["last_link_id"] = max([int(graph.get("last_link_id") or 0)] + [int(v) for v in have_link])
+        # Номера устройств (диапазоны PHONE_ID_BASE / DEV_LINK_BASE) в компьютерные счётчики
+        # не подмешиваем — счётчики компьютера обязаны остаться маленькими.
+        _plain_ids = [int(n.get("id") or 0) for n in nodes if int(n.get("id") or 0) < PHONE_ID_BASE]
+        graph["last_node_id"] = max([int(graph.get("last_node_id") or 0)] + _plain_ids)
+        _plain_lids = [int(v) for v in have_link if int(v) < DEV_LINK_BASE]
+        if _plain_lids:
+            graph["last_link_id"] = max([int(graph.get("last_link_id") or 0)] + _plain_lids)
     if left != pending:
         _phone_tasks_save(left)
     return graph, changed
@@ -968,6 +997,21 @@ def _phone_size_for(title, base=(100, 56)):
     extra = len(title) - 14
     if extra > 0:
         w = min(200, w + extra * 6)
+    return [w, h]
+
+
+def _file_card_size_for(title, base=(100, 56)):
+    """Размер карточки-файла от устройства — «максимально низко, но название целиком» (06.10.26).
+    Описания у карточки нет (06.10.26: «не надо писать, что файл с телефона — связь и так
+    показывает источник»), поэтому высота = полоса со значком + строки названия + запас.
+    Точнее высоту по шрифтам темы подберёт приложение при загрузке (fitFileCard)."""
+    w = int(base[0] or 100)
+    extra = len(title) - 14
+    if extra > 0:
+        w = min(200, w + extra * 6)
+    per = max(60, w - 24)                  # ширина строки названия (поле w-24, как в отрисовке)
+    lines = max(1, (int(len(title) * 6.5) + per - 1) // per)   # ~6.5 px на символ при titleSize
+    h = 19 + lines * 15 + 4                # полоса со значком ~19; строки названия; запас
     return [w, h]
 
 
@@ -1085,9 +1129,21 @@ def _add_phone_task(data):
         chans = [str(c).strip().lower() for c in (raw_ch or [])]
         chans = [c for c in chans if c in ("pc", "phone", "tablet", "telegram", "vkmax")]
         if not chans:
-            chans = ["phone"]        # по умолчанию — на телефоне: напоминание и создали на нём
+            # По умолчанию — ВСЕ ТРИ канала (просьба Ярослава 06.10.26): компьютер, телефон и
+            # планшет; лишние пользователь снимает галочками. Сюда попадаем только со старых
+            # сборок телефона, которые ещё не присылают список каналов.
+            chans = ["pc", "phone", "tablet"]
     order0 = max([int(n.get("order") or 0) for n in nodes] + [0])
-    nid = int(graph.get("last_node_id") or 0) + 1
+    # Тип устройства — из поля device (старые сборки его не шлют — считаем телефоном).
+    _dev = str(data.get("device") or request.args.get("device") or "").strip().lower()
+    if _dev not in ("phone", "tablet"):
+        _dev = "phone"
+    # Номер — из диапазона СВОЕГО устройства (см. PHONE_ID_BASE): компьютерные не трогаем,
+    # совпадение исключено.
+    _id_base = TABLET_ID_BASE if _dev == "tablet" else PHONE_ID_BASE
+    _used = [int(n.get("id") or 0) for n in nodes
+             if _id_base <= int(n.get("id") or 0) < _id_base + 1000000]
+    nid = (max(_used) + 1) if _used else _id_base + 1
     size = list(template.get("size")) if template and template.get("size") else [100, 56]
     # Родитель (необязательно): с телефона можно создать и ПОДЗАДАЧУ — тогда карточка встаёт
     # рядом с родителем и связывается с ним (как двойной клик по карточке в приложении).
@@ -1100,6 +1156,11 @@ def _add_phone_task(data):
         parent = next((n for n in nodes if int(n.get("id") or 0) == pid), None)
         if parent is None:
             print("[телефон] родитель id " + str(pid) + " не найден — создаю обычную задачу")
+    # Панель устройства («Смартфон»/«Планшет», kind=device) — родитель задач, пришедших
+    # синхронизацией с телефона/планшета (просьба Ярослава 06.10.26). Если панели в графе
+    # ещё нет, задача просто встаёт как раньше, без связи. Тип (_dev) вычислен выше.
+    dev_node = next((n for n in nodes if (n.get("kind") or "") == "device"
+                     and (n.get("device") or "phone") == _dev), None)
     if parent is not None:
         ppos = parent.get("pos") or [0, 0]
         psize = parent.get("size") or [100, 56]
@@ -1125,7 +1186,11 @@ def _add_phone_task(data):
             sub_titles.append(s)
     kept = []                     # (карточка, её входящая связь) — для переноса в браузер
     new_links = []
-    next_lid = int(graph.get("last_link_id") or 0)
+    # Связи, созданные вместе с задачами устройств, нумеруются в СВОЁМ диапазоне
+    # (DEV_LINK_BASE) — иначе новая связь на компьютере могла занять номер связи задачи.
+    _lused = [int(l[0]) for l in links
+              if isinstance(l, list) and l and DEV_LINK_BASE <= int(l[0] or 0) < DEV_LINK_BASE + 1000000]
+    next_lid = max(_lused) if _lused else DEV_LINK_BASE
     if parent is not None:
         next_lid += 1
         new_links.append([next_lid, int(parent["id"]), 0, nid, 0, "*"])   # родитель → задача
@@ -1135,6 +1200,17 @@ def _add_phone_task(data):
         if pouts:
             cur = pouts[0].get("links")
             pouts[0]["links"] = (list(cur) if isinstance(cur, list) else []) + [next_lid]
+    if parent is None and dev_node is not None:
+        # Задача пришла с устройства «с нуля» — вешаем её на панель устройства родителем:
+        # так всё, что приехало синхронизацией, видно под своим устройством.
+        next_lid += 1
+        new_links.append([next_lid, int(dev_node["id"]), 0, nid, 0, "*"])   # панель → задача
+        if node.get("inputs"):
+            node["inputs"][0]["link"] = next_lid
+        douts = dev_node.get("outputs") or []
+        if douts:
+            cur = douts[0].get("links")
+            douts[0]["links"] = (list(cur) if isinstance(cur, list) else []) + [next_lid]
     if want_notify:
         # Напоминание — отдельная карточка, привязанная к задаче (выход задачи → вход напоминания).
         rid = nid + 1
@@ -1182,12 +1258,13 @@ def _add_phone_task(data):
             cur = outs[0].get("links")
             outs[0]["links"] = (list(cur) if isinstance(cur, list) else []) + [next_lid]
         kept.append((sub, [link]))
-    if next_lid > int(graph.get("last_link_id") or 0):
-        graph["last_link_id"] = next_lid
+    # Счётчики КОМПЬЮТЕРА номерами устройств не поднимаем: last_node_id остаётся маленьким
+    # (номера задач устройств живут в своих диапазонах, см. PHONE_ID_BASE).
     links = links + new_links
     graph["nodes"] = nodes
     graph["links"] = links
-    graph["last_node_id"] = max([int(graph.get("last_node_id") or 0)] + [int(n.get("id") or 0) for n in nodes])
+    _plain_ids = [int(n.get("id") or 0) for n in nodes if int(n.get("id") or 0) < PHONE_ID_BASE]
+    graph["last_node_id"] = max([int(graph.get("last_node_id") or 0)] + _plain_ids)
     with open(GRAPH_FILE, "w", encoding="utf-8") as f:
         json.dump(graph, f, ensure_ascii=False, indent=2)
     pending = _phone_tasks_load()
@@ -1293,6 +1370,122 @@ def api_pick_file():
     return jsonify({"status": "ok", "path": os.path.normpath(path)})
 
 
+# --- Опознание брошенного файла по приметам (06.10.26) -----------------------------------------
+# Браузер НЕ отдаёт путь перетащенного файла (защита Chrome) — но отдаёт его приметы: имя,
+# размер и время изменения. Просьба Ярослава: «Я не должен совершать каких-либо дополнительных
+# действий — автоматически». Поэтому ищем файл на диске, сверяя ВСЕ ТРИ приметы: имя (без учёта
+# регистра, как в Windows), размер (точно) и время изменения (±2 с). Это не «поиск по имени»:
+# совпадение трёх примет практически однозначно указывает на тот самый файл.
+LOCATE_MAX_SECONDS = 2.5     # общий лимит обхода, чтобы бросок файла не «подвисал»
+LOCATE_SKIP_DIRS = {'$recycle.bin', 'system volume information', 'windows', 'users',
+                    'program files', 'program files (x86)', 'programdata', 'recovery',
+                    'perflogs', 'appdata', 'node_modules', '.git'}
+
+
+def _locate_file(name, size, mtime):
+    """Файл с такими приметами: имя + размер + время изменения (±2 с). None — не нашли."""
+    want = name.lower()
+    deadline = time.time() + LOCATE_MAX_SECONDS
+    home = os.path.expanduser("~")
+
+    def match(p):
+        try:
+            st = os.stat(p)
+        except OSError:
+            return False
+        return st.st_size == size and abs(st.st_mtime - mtime) <= 2.0
+
+    def scan_one(folder):
+        """Файл с нужным именем прямо в папке (сверяем приметы)."""
+        if time.time() > deadline or not os.path.isdir(folder):
+            return None
+        try:
+            for e in os.listdir(folder):
+                if e.lower() != want:
+                    continue
+                p = os.path.join(folder, e)
+                if os.path.isfile(p) and match(p):
+                    return p
+        except OSError:
+            pass
+        return None
+
+    def scan(folder, depth):
+        """Глубина 0 — только папка; 1 — и её подпапки первым уровнем."""
+        hit = scan_one(folder)
+        if hit or depth <= 0:
+            return hit
+        try:
+            subs = sorted(os.listdir(folder))
+        except OSError:
+            return None
+        for e in subs:
+            low = e.lower()
+            if low in LOCATE_SKIP_DIRS or low.startswith('.'):
+                continue
+            if time.time() > deadline:
+                return None
+            hit = scan_one(os.path.join(folder, e))
+            if hit:
+                return hit
+        return None
+
+    # 1. Личные папки: файлы чаще всего лежат тут (с одним уровнем вложенности).
+    fast = [
+        os.path.join(home, "Desktop"), os.path.join(home, "Downloads"),
+        os.path.join(home, "Documents"), os.path.join(home, "Pictures"),
+        os.path.join(home, "Music"), os.path.join(home, "Videos"),
+        BASE_DIR,
+        os.path.join(BASE_DIR, "device_files", "phone"),
+        os.path.join(BASE_DIR, "device_files", "tablet"),
+        os.path.join(BASE_DIR, "device_files", "inbox"),
+        os.path.join(BASE_DIR, "hermes_files"),
+    ]
+    try:                                    # облачные папки (OneDrive, Яндекс.Диск, ...), если есть
+        for e in os.listdir(home):
+            low = e.lower()
+            if low.startswith(("onedrive", "yandex", "яндекс", "dropbox", "google drive")):
+                fast.append(os.path.join(home, e))
+    except OSError:
+        pass
+    for d in fast:
+        hit = scan(d, 1)
+        if hit:
+            return hit
+
+    # 2. Корни дисков: файл мог лежать прямо на диске (например, G:\) или в его папке.
+    for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+        if time.time() > deadline:
+            break
+        root = letter + ":\\"
+        if os.path.exists(root):
+            hit = scan(root, 1)
+            if hit:
+                return hit
+    return None
+
+
+@app.route("/api/locate_file", methods=["POST"])
+def api_locate_file():
+    """Найти брошенный файл по приметам {name, size, mtime(сек)}; 'none' — не нашли."""
+    bad = _api_guard()
+    if bad:
+        return bad
+    data = request.get_json(silent=True) or {}
+    name = os.path.basename(str(data.get("name") or "").strip().strip('"'))
+    try:
+        size = int(data.get("size", -1))
+        mtime = float(data.get("mtime", 0))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "error": "плохие приметы файла"}), 400
+    if not name or size < 0:
+        return jsonify({"status": "none"})
+    hit = _locate_file(name, size, mtime)
+    if not hit:
+        return jsonify({"status": "none"})
+    return jsonify({"status": "ok", "path": os.path.normpath(hit)})
+
+
 @app.route("/api/open_file", methods=["POST"])
 def api_open_file():
     """Открыть файл-ссылку стандартной программой системы (Windows: os.startfile)."""
@@ -1313,6 +1506,402 @@ def api_open_file():
     except Exception as e:
         return jsonify({"status": "error", "error": "не удалось открыть: %s" % e}), 500
     return jsonify({"status": "ok"})
+
+
+# --- Файлы для устройств: с плитки «Смартфон»/«Планшет» на устройство (06.10.26) --------------
+# Просьба Ярослава: файл, брошенный на плитку устройства, «начинает копироваться» на телефон
+# или планшет. Кладём файл в очередь BASE_DIR/device_files/<устройство>/ — устройство заберёт
+# её при ближайшей синхронизации (чтение очереди добавим в приложение телефона отдельным шагом).
+# Защита как у прочих файловых действий: только с этого компьютера и со своим заголовком клиента.
+DEVICE_FILES_DIR = os.path.join(BASE_DIR, "device_files")
+
+
+def _safe_file_name(name):
+    """Имя файла без путей и запрещённых в Windows символов."""
+    name = os.path.basename(str(name or "")).replace("\\", "_").replace("/", "_")
+    name = "".join(ch for ch in name if ch not in '<>:"|?*').strip().strip(".")
+    return name or "file"
+
+
+@app.route("/api/device/file", methods=["POST"])
+def api_device_file():
+    bad = _api_guard()
+    if bad:
+        return bad
+    dev = (request.args.get("device") or "").strip().lower()
+    if dev not in ("phone", "tablet"):
+        return jsonify({"status": "error", "error": "device должен быть phone или tablet"}), 400
+    f = request.files.get("file")
+    if f is None:
+        return jsonify({"status": "error", "error": "файл не получен"}), 400
+    folder = os.path.join(DEVICE_FILES_DIR, dev)
+    os.makedirs(folder, exist_ok=True)
+    name = _safe_file_name(f.filename)
+    base, ext = os.path.splitext(name)
+    path = os.path.join(folder, name)
+    n = 2
+    while os.path.exists(path):                      # одинаковые имена не затираем
+        path = os.path.join(folder, "%s (%d)%s" % (base, n, ext))
+        n += 1
+    f.save(path)
+    size = os.path.getsize(path)
+    print("[устройство] файл для %s: %s (%d байт)" % (dev, os.path.basename(path), size))
+    return jsonify({"status": "ok", "name": os.path.basename(path), "size": size})
+
+
+@app.route("/api/device/files", methods=["GET"])
+def api_device_files():
+    """Очередь файлов для устройства (просьба Ярослава 06.10.26): телефон читает её при
+    синхронизации и в приложении появляются «Файлы с компьютера» со ссылками."""
+    dev = (request.args.get("device") or "").strip().lower()
+    if dev not in ("phone", "tablet"):
+        return jsonify({"status": "error", "error": "device должен быть phone или tablet"}), 400
+    folder = os.path.join(DEVICE_FILES_DIR, dev)
+    items = []
+    try:
+        for name in sorted(os.listdir(folder)):
+            p = os.path.join(folder, name)
+            if os.path.isfile(p):
+                st = os.stat(p)
+                items.append({"name": name, "size": int(st.st_size), "mtime": int(st.st_mtime)})
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+    return jsonify({"status": "ok", "items": items})
+
+
+@app.route("/api/device/file/get", methods=["GET"])
+def api_device_file_get():
+    """Скачать устройству файл из его очереди. Только из своей папки — имя проверяем
+    на «путь наружу», чтобы из сети нельзя было вытащить произвольный файл."""
+    dev = (request.args.get("device") or "").strip().lower()
+    if dev not in ("phone", "tablet"):
+        return jsonify({"status": "error", "error": "device должен быть phone или tablet"}), 400
+    raw = str(request.args.get("name") or "")
+    name = _safe_file_name(raw)
+    if not raw or name != raw:
+        return jsonify({"status": "error", "error": "плохое имя файла"}), 400
+    folder = os.path.abspath(os.path.join(DEVICE_FILES_DIR, dev))
+    look = os.path.abspath(os.path.join(folder, name))
+    if not look.startswith(folder + os.sep) or not os.path.isfile(look):
+        return jsonify({"status": "error", "error": "файл не найден"}), 404
+    return send_file(look, as_attachment=True, download_name=name)
+
+
+def _add_inbox_card(name, path, dev):
+    """Карточка-ссылка на файл, приехавший с устройства: встаёт рядом с панелью устройства,
+    как задачи с телефона. Кладём её и в «парковку» (phone_tasks.json) — браузер держит граф
+    в памяти, и без этого его следующее сохранение стёрло бы карточку (тот же приём, что у
+    задач с телефона, проверено 06.10.26)."""
+    with open(GRAPH_FILE, encoding="utf-8") as f:
+        graph = json.load(f)
+    nodes = graph.get("nodes") or []
+    links = graph.get("links")
+    if isinstance(links, dict):
+        links = list(links.values())
+    if not isinstance(links, list):
+        links = []
+    template = next((n for n in nodes if (n.get("kind") or "task") == "task"), None)
+    _id_base = TABLET_ID_BASE if dev == "tablet" else PHONE_ID_BASE
+    _used = [int(n.get("id") or 0) for n in nodes
+             if _id_base <= int(n.get("id") or 0) < _id_base + 1000000]
+    nid = (max(_used) + 1) if _used else _id_base + 1
+    _base_size = list(template.get("size")) if template and template.get("size") else [100, 56]
+    size = _file_card_size_for(name, _base_size)
+    dev_node = next((n for n in nodes if (n.get("kind") or "") == "device"
+                     and (n.get("device") or "phone") == dev), None)
+    if dev_node is not None:
+        ppos = dev_node.get("pos") or [0, 0]
+        psize = dev_node.get("size") or [56, 56]
+        pos = _find_free_pos_beside(nodes, int(ppos[0]) + int(psize[0]) + 60, int(ppos[1]),
+                                    int(size[0]), int(size[1]))
+    else:
+        pos = _find_free_pos(nodes, int(size[0]), int(size[1]))
+    order0 = max([int(n.get("order") or 0) for n in nodes] + [0])
+    node = _phone_card(template, nid, pos, size, name, "task")
+    node["order"] = order0 + 1
+    node["status"] = "waiting"
+    # Описание «Файл с телефона/планшета» не пишем (просьба Ярослава 06.10.26: «не надо писать,
+    # что у нас телефона — у неё же есть связь, которая на это указывает»).
+    node["files"] = [path]
+    nodes.append(node)
+    new_links = []
+    if dev_node is not None:
+        _lused = [int(l[0]) for l in links
+                  if isinstance(l, list) and l and DEV_LINK_BASE <= int(l[0] or 0) < DEV_LINK_BASE + 1000000]
+        lid = (max(_lused) if _lused else DEV_LINK_BASE) + 1
+        new_links.append([lid, int(dev_node["id"]), 0, nid, 0, "*"])
+        if node.get("inputs"):
+            node["inputs"][0]["link"] = lid
+        douts = dev_node.get("outputs") or []
+        if douts:
+            cur = douts[0].get("links")
+            douts[0]["links"] = (list(cur) if isinstance(cur, list) else []) + [lid]
+    graph["nodes"] = nodes
+    graph["links"] = links + new_links
+    _plain_ids = [int(n.get("id") or 0) for n in nodes if int(n.get("id") or 0) < PHONE_ID_BASE]
+    graph["last_node_id"] = max([int(graph.get("last_node_id") or 0)] + _plain_ids)
+    with open(GRAPH_FILE, "w", encoding="utf-8") as f:
+        json.dump(graph, f, ensure_ascii=False, indent=2)
+    pending = _phone_tasks_load()
+    pending[str(nid)] = {"node": node, "links": new_links}
+    _phone_tasks_save(pending)
+    print("[устройство] карточка-файл id " + str(nid) + ": " + name)
+    return nid
+
+
+@app.route("/api/device/upload", methods=["POST"])
+def api_device_upload():
+    """Файлы ОТ устройства на компьютер (просьба Ярослава 06.10.26): кладём в
+    device_files/inbox/, а рядом с панелью устройства появляется карточка-ссылка на файл."""
+    dev = (request.args.get("device") or "").strip().lower()
+    if dev not in ("phone", "tablet"):
+        dev = "phone"
+    folder = os.path.join(DEVICE_FILES_DIR, "inbox")
+    os.makedirs(folder, exist_ok=True)
+    saved = []
+    for f in (request.files.getlist("file") or []):
+        if f is None or not str(f.filename or "").strip():
+            continue
+        name = _safe_file_name(f.filename)
+        base, ext = os.path.splitext(name)
+        path = os.path.join(folder, name)
+        n = 2
+        while os.path.exists(path):
+            path = os.path.join(folder, "%s (%d)%s" % (base, n, ext))
+            n += 1
+        f.save(path)
+        size = os.path.getsize(path)
+        saved.append({"name": os.path.basename(path), "size": size, "path": os.path.normpath(path)})
+        print("[устройство] файл с %s: %s (%d байт)" % (dev, os.path.basename(path), size))
+    if not saved:
+        return jsonify({"status": "error", "error": "файл не получен"}), 400
+    cards = []
+    for rec in saved:
+        try:
+            cards.append(_add_inbox_card(rec["name"], rec["path"], dev))
+        except Exception as e:
+            print("[устройство] карточку для файла не создал:", e)
+    return jsonify({"status": "ok", "saved": saved, "cards": cards})
+
+
+# --- Чат с Гермесом (просьба Ярослава 06.10.26) ---------------------------------------------
+# Кнопка «Гермес» в приложении телефона: сообщение уезжает на компьютер в файл hermes_chat.jsonl,
+# агент Гермес отвечает в тот же файл, приложение показывает ленту. Канал пробуждения агента —
+# вебхук Hermes на этом же компьютере (мгновенно); если недоступен — сообщение дождётся ответа,
+# ничего не теряется. Секрет вебхука лежит файлом рядом с graph.json (в код не зашит).
+HERMES_CHAT_FILE = os.path.join(BASE_DIR, "hermes_chat.jsonl")
+HERMES_FILES_DIR = os.path.join(BASE_DIR, "hermes_files")   # вложения чата «Гермес» (06.10.26)
+HERMES_WEBHOOK_URL = os.environ.get("HERMES_WEBHOOK_URL", "http://127.0.0.1:8644/webhooks/plannertate-chat")
+_HERMES_LOCK = threading.Lock()
+
+
+def _hermes_webhook_secret():
+    v = (os.environ.get("HERMES_WEBHOOK_SECRET") or "").strip()
+    if v:
+        return v
+    try:
+        with open(os.path.join(BASE_DIR, "hermes_webhook_secret.txt"), encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _hermes_chat_load():
+    items = []
+    try:
+        with open(HERMES_CHAT_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(rec, dict) and (rec.get("text") or rec.get("file_name")):
+                    items.append(rec)
+    except FileNotFoundError:
+        pass
+    return items
+
+
+def _hermes_chat_append(kind, text, **extra):
+    with _HERMES_LOCK:
+        items = _hermes_chat_load()
+        nid = max([int(i.get("id") or 0) for i in items] + [0]) + 1
+        import datetime as _hdt        # как принято в этом файле — модуль берём внутри функции
+        rec = {"id": nid, "ts": _hdt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+               "from": kind, "text": text}
+        rec.update(extra)
+        with open(HERMES_CHAT_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return rec
+
+
+def _hermes_wake(rec):
+    """Разбудить Гермеса: POST на локальный вебхук Hermes — в фоне, чтобы телефону отвечали
+    мгновенно. Подпись — generic HMAC V2: hex HMAC-SHA256 от "<unix>.<body>"."""
+    def run():
+        try:
+            secret = _hermes_webhook_secret()
+            if not secret:
+                print("[гермес] секрет вебхука не задан — ответ придёт при следующем запуске")
+                return
+            wake_text = rec.get("text") or ""
+            if rec.get("file_name"):
+                wake_text = (wake_text + "\n[к сообщению приложен файл: %s | %s]"
+                             % (rec.get("file_name"), rec.get("file_path") or "")).strip()
+            body = json.dumps({"source": "plannertate", "id": rec.get("id"),
+                               "text": wake_text, "device": rec.get("device") or "phone",
+                               "ts": rec.get("ts")}, ensure_ascii=False).encode("utf-8")
+            ts = str(int(time.time()))
+            req = urllib.request.Request(HERMES_WEBHOOK_URL, data=body, method="POST")
+            req.add_header("Content-Type", "application/json; charset=utf-8")
+            req.add_header("X-Webhook-Timestamp", ts)
+            sig = hmac.new(secret.encode("utf-8"), ts.encode() + b"." + body,
+                           hashlib.sha256).hexdigest()
+            req.add_header("X-Webhook-Signature-V2", sig)
+            urllib.request.urlopen(req, timeout=6).read()
+            print("[гермес] вебхук отправлен")
+        except Exception as e:
+            print("[гермес] вебхук не дошёл:", e)
+    threading.Thread(target=run, daemon=True).start()
+
+
+@app.route("/api/hermes/chat", methods=["GET", "POST"])
+def api_hermes_chat():
+    """Лента чата с Гермесом: POST — сообщение от телефона, GET — записи новее since=<id>."""
+    if request.method == "GET":
+        try:
+            since = int(request.args.get("since") or 0)
+        except Exception:
+            since = 0
+        items = [i for i in _hermes_chat_load() if int(i.get("id") or 0) > since]
+        return jsonify({"status": "ok", "items": items[-200:]})
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()
+    if not text:
+        return jsonify({"status": "error", "error": "пустое сообщение"}), 400
+    rec = _hermes_chat_append("user", text[:4000],
+                              device=(str(data.get("device") or "") or "phone"))
+    _hermes_wake(rec)
+    return jsonify({"status": "ok", "id": rec["id"]})
+
+
+@app.route("/api/hermes/reply", methods=["POST"])
+def api_hermes_reply():
+    """Ответ Гермеса в чат (зовёт скрипт-мост hermes_chat_reply.py с этого компьютера)."""
+    bad = _api_guard()
+    if bad:
+        return bad
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()
+    if not text:
+        return jsonify({"status": "error", "error": "пустой ответ"}), 400
+    rec = _hermes_chat_append("hermes", text[:8000], reply_to=data.get("id"))
+    print("[гермес] ответ записан: id " + str(rec["id"]))
+    return jsonify({"status": "ok", "id": rec["id"]})
+
+
+@app.route("/api/hermes/attach", methods=["POST"])
+def api_hermes_attach():
+    """Файл из чата телефона (просьба Ярослава 06.10.26): сохраняем в hermes_files рядом
+    с graph.json, в ленте появляется запись с именем файла, а Гермес получает пометку
+    с полным путём — он может прочитать файл инструментом hermes_chat_file."""
+    f = request.files.get("file")
+    if f is None or not str(f.filename or "").strip():
+        return jsonify({"status": "error", "error": "файл не получен"}), 400
+    text = str(request.form.get("text") or "").strip()
+    device = str(request.form.get("device") or "").strip() or "phone"
+    os.makedirs(HERMES_FILES_DIR, exist_ok=True)
+    name = _safe_file_name(f.filename)
+    base, ext = os.path.splitext(name)
+    path = os.path.join(HERMES_FILES_DIR, name)
+    n = 2
+    while os.path.exists(path):
+        path = os.path.join(HERMES_FILES_DIR, "%s (%d)%s" % (base, n, ext))
+        n += 1
+    f.save(path)
+    size = os.path.getsize(path)
+    rec = _hermes_chat_append("user", text[:4000], device=device,
+                              file_name=os.path.basename(path),
+                              file_path=os.path.normpath(path),
+                              file_size=size)
+    _hermes_wake(rec)
+    print("[гермес] вложение из чата: %s (%d байт)" % (os.path.basename(path), size))
+    return jsonify({"status": "ok", "id": rec["id"], "file": os.path.basename(path)})
+
+
+# --- Кнопка «Установить MCP на Гермес» (просьба Ярослава 06.10.26) ---------------------------
+# Приложение НЕ ставит MCP само (решение Ярослава): кнопка показывает готовое сообщение
+# с путями к файлам — его копируют и отправляют Гермесу, а тот ставит сервер своим ходом.
+def _mcp_server_file():
+    """Где лежит файл MCP-сервера: сначала РЯДОМ С ПРОГРАММОЙ (туда его кладёт установщик —
+    именно этот путь показывается в сообщении: «куда поставилось, оттуда и подключаем»),
+    затем репозиторий проекта, затем сборка."""
+    repo = os.path.join(os.path.expanduser("~"), "PycharmProjects", "PlannerTaTe",
+                        "mcp", "plannertate_mcp.py")
+    for cand in (os.path.join(PROG_DIR, "mcp", "plannertate_mcp.py"),
+                 repo,
+                 os.path.join(RES_DIR, "mcp", "plannertate_mcp.py")):
+        if os.path.isfile(cand):
+            return os.path.normpath(cand)
+    return os.path.normpath(repo)          # ничего не нашли — покажем ожидаемый путь
+
+
+def _hermes_home():
+    """Папка Hermes на этом компьютере (нужна только для строки «уже подключён или нет»)."""
+    for cand in (os.environ.get("HERMES_HOME"),
+                 os.path.join(os.environ.get("LOCALAPPDATA") or "", "hermes"),
+                 os.path.join(os.path.expanduser("~"), ".hermes")):
+        if cand and os.path.isdir(cand):
+            return cand
+    return ""
+
+
+@app.route("/api/mcp/info", methods=["GET"])
+def api_mcp_info():
+    """Что показать в окне «Установить MCP на Гермес»: статус и готовое сообщение с путями."""
+    import re as _re
+    server = _mcp_server_file()
+    graph = os.path.normpath(GRAPH_FILE)
+    installed = False
+    hh = _hermes_home()
+    try:
+        with open(os.path.join(hh, "config.yaml"), encoding="utf-8") as f:
+            conf = f.read()
+        installed = bool(_re.search(r"mcp_servers:\s*\n\s+plannertate:", conf))
+    except Exception:
+        installed = False
+    text = ("Установи MCP-сервер для моего приложения PlannerTaTe.\n"
+            "Файл сервера: %s\n"
+            "Работать он должен с моим графом: %s\n"
+            "Зарегистрируй его в Hermes как MCP-сервер \"plannertate\" — чтобы у тебя появились "
+            "инструменты для моих задач, файлов и чата «Гермес».\n"
+            "\n"
+            "Затем настрой канал чата «Гермес» — без этого сообщения с телефона не будут тебя будить:\n"
+            "1. Проверь, что платформа вебхуков включена и слушает порт 8644 (hermes webhook list "
+            "подскажет; если ещё не включена — включи).\n"
+            "2. Сгенерируй секрет вебхука — 64 знака hex (например, secrets.token_hex(32)).\n"
+            "3. Сохрани его файлом hermes_webhook_secret.txt рядом с graph.json (в папке данных "
+            "приложения) — им приложение подписывает каждое сообщение.\n"
+            "4. Создай подписку Hermes ({text} и имена инструментов в промпте сохрани дословно):\n"
+            "   hermes webhook subscribe plannertate-chat --deliver log --secret <СЕКРЕТ> "
+            "--prompt \"Пользователь прислал сообщение из чата «Гермес» приложения PlannerTaTe. "
+            "Его текст: {text}. Посмотри контекст инструментом hermes_chat_read (MCP plannertate), "
+            "ответь по-русски коротко и по делу. ОБЯЗАТЕЛЬНОЕ финальное действие — вызови инструмент "
+            "hermes_chat_reply (MCP plannertate), иначе ответ не дойдёт до телефона.\"\n"
+            "5. Перезапусти шлюз: hermes gateway restart.\n"
+            "\n"
+            "Проверка: напиши сообщение в чат «Гермес» с телефона — ответ должен прийти за ~15 секунд.\n"
+            "\n"
+            "Если чат однажды перестанет отвечать: проверь, что hermes_webhook_secret.txt лежит "
+            "рядом с graph.json и совпадает с секретом подписки. После чистой переустановки приложения "
+            "данные пересоздаются — файл секрета надо восстановить." % (server, graph))
+    return jsonify({"status": "ok", "installed": installed, "server": server,
+                    "graph": graph, "hermes": hh, "text": text})
 
 
 # --- Лицензия / поддержка автора (03.10.26, просьба Ярослава) ------------------------------

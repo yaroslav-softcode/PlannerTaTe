@@ -5,7 +5,7 @@
 ; Данные (граф, ключ) живут в %APPDATA%\PlannerTaTe и при удалении НЕ трогаются.
 
 #define AppName "PlannerTaTe"
-#define AppVersion "1.1"
+#define AppVersion "1.2"
 #define AppExe "PlannerTaTe.exe"
 #define AppPublisher "Ярослав Хмелев"
 
@@ -30,7 +30,7 @@ WizardStyle=modern
 AppMutex=PlannerTaTe_Single_Instance
 CloseApplications=yes
 RestartApplications=no
-VersionInfoVersion=1.1.0.0
+VersionInfoVersion=1.2.0.0
 VersionInfoCompany={#AppPublisher}
 VersionInfoDescription=Установка {#AppName} — планировщика задач
 VersionInfoProductName={#AppName}
@@ -56,6 +56,10 @@ Name: "autostart"; Description: "{cm:autostart}"; GroupDescription: "{cm:tasksgr
 [Files]
 Source: "dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "app\PlannerTaTe.apk"; DestDir: "{app}\app"; Flags: ignoreversion
+; Файлы MCP-сервера (для кнопки «Установить MCP на Гермес», 06.10.26): кладём рядом с программой,
+; чтобы комплект был полным даже без папки проекта. Сам сервер работает с боевым графом из %APPDATA%.
+Source: "mcp\plannertate_mcp.py"; DestDir: "{app}\mcp"; Flags: ignoreversion
+Source: "mcp\hermes_chat_reply.py"; DestDir: "{app}\mcp"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

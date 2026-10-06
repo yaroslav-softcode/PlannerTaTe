@@ -105,9 +105,19 @@ export const L18N = {
     phoneBtnTab: 'Установить на планшет',
     phoneTitle: 'Установка на телефон',
     phoneTitleTab: 'Установка на планшет',
-    phoneAsk: 'Установить приложение на телефон Android?',
+    phoneAsk: 'Установить приложение на телефон с ОС Андроид?',
     phoneAskYes: 'Да, установить',
     phoneAskLater: 'Позже',
+    /* «Установить MCP на Гермес» (06.10.26, просьба Ярослава) */
+    mcpBtn: 'Установить MCP на Гермес',
+    mcpTitle: 'MCP для Гермеса',
+    mcpChecking: 'Проверяю…',
+    mcpInstalled: 'Похоже, MCP уже подключён к Гермесу.',
+    mcpNotInstalled: 'Похоже, MCP ещё не подключён (или не удалось проверить).',
+    mcpAbout: 'MCP — «мост» между Гермесом и планировщиком: задачи, файлы и чат «Гермес» на телефоне. Скопируйте сообщение ниже и отправьте его Гермесу в чате — он подключит сервер сам.',
+    mcpCopy: 'Скопировать сообщение',
+    mcpCopied: 'Скопировано — отправьте Гермесу',
+    mcpCopyFail: 'Не получилось скопировать — выделите текст и скопируйте вручную',
     phoneStep1: '1. Наведите камеру телефона или планшета на этот код — откроется загрузка приложения:',
     phoneStep2: '2. Скачайте и установите: «Разрешить установку из этого источника» → «Установить».',
     phoneStep3: '3. Откройте PlannerTaTe на устройстве — адрес компьютера он найдёт сам. Останется ввести ключ (если приложение уже стоит, повторное наведение камеры подставит адрес и ключ само):',
@@ -132,7 +142,7 @@ export const L18N = {
        столько же строк и тот же порядок, переставлять только вместе. */
     phoneAbout: [
       'Основное приложение для работы установлено на компьютере.',
-      'Приложение на телефоне при синхронизации копирует все карточки и напоминания с компьютера на телефон при нахождении в одной сети Wi-Fi (автоматическая синхронизация проходит 07:00, 14:00, 21:00).',
+      'Приложение на телефоне при синхронизации копирует все карточки и напоминания с компьютера на телефон при нахождении в одной сети Wi-Fi (автоматическая синхронизация проходит 07:00, 10:00, 14:00, 17:00, 21:00, 23:00).',
       'Запланированные напоминания воспроизводятся на телефоне в срок со звуком, установленным на будильник телефона.',
       'На телефоне можно создать новые карточки и напоминания, и они будут скопированы на компьютер при первой успешной синхронизации.',
       'Изменение существующих карточек на телефоне не поддерживается из-за возможных конфликтов с компьютером при синхронизации (возможны изменения в следующих версиях приложения).',
@@ -161,6 +171,12 @@ export const L18N = {
     licThanks: 'Спасибо! Кнопка «Лицензия» больше не появится',
     licOpenFail: 'Не удалось открыть страницу оплаты',
     licLogo: 'Открыть страницу поддержки',
+    /* Панели устройств на холсте («Смартфон»/«Планшет», 06.10.26, просьба Ярослава) */
+    devicePhone: 'Смартфон',
+    deviceTablet: 'Планшет',
+    deviceNoDelete: 'Панель устройства удалить нельзя — она системная',
+    deviceFileOk: 'Файл уехал на «{dev}» — дойдёт при синхронизации',
+    deviceFileFail: 'Не удалось отправить файл на устройство',
     },
   en: {
     title: 'PlannerTaTe', status: 'Status',
@@ -202,6 +218,16 @@ export const L18N = {
     phoneAsk: 'Install the app on an Android phone?',
     phoneAskYes: 'Yes, install',
     phoneAskLater: 'Later',
+    /* Set up MCP for Hermes (06.10.26) */
+    mcpBtn: 'Set up MCP for Hermes',
+    mcpTitle: 'MCP for Hermes',
+    mcpChecking: 'Checking…',
+    mcpInstalled: 'Looks like MCP is already connected to Hermes.',
+    mcpNotInstalled: 'Looks like MCP is not connected yet (or the check failed).',
+    mcpAbout: 'MCP is the bridge between Hermes and the planner: tasks, files and the Hermes chat on your phone. Copy the message below and send it to Hermes in your chat — he will set the server up himself.',
+    mcpCopy: 'Copy the message',
+    mcpCopied: 'Copied — now send it to Hermes',
+    mcpCopyFail: 'Could not copy — select the text and copy it manually',
     phoneStep1: '1. Point the phone or tablet camera at this code — the app download opens:',
     phoneStep2: '2. Download and install it: “Allow install from this source” → “Install”.',
     phoneStep3: '3. Open PlannerTaTe on the device — it finds the computer by itself. Then enter the key (if the app is already installed, scanning the code again fills in the address and key for you):',
@@ -226,7 +252,7 @@ export const L18N = {
        ONE TO ONE: same number of lines, same order — change only together. */
     phoneAbout: [
       'The main working app is installed on the computer.',
-      'When syncing, the phone app copies all cards and reminders from the computer to the phone while both are on the same Wi-Fi network (automatic sync runs at 07:00, 14:00 and 21:00).',
+      'When syncing, the phone app copies all cards and reminders from the computer to the phone while both are on the same Wi-Fi network (automatic sync runs at 07:00, 10:00, 14:00, 17:00, 21:00 and 23:00).',
       'Scheduled reminders fire on the phone on time, with the sound set for the phone alarm.',
       'You can create new cards and reminders on the phone; they are copied to the computer on the first successful sync.',
       'Editing existing cards on the phone is not supported because of possible conflicts with the computer during sync (this may change in future versions of the app).',
@@ -255,5 +281,11 @@ export const L18N = {
     licThanks: "Thank you! The Licence button won't appear again",
     licOpenFail: 'Could not open the payment page',
     licLogo: 'Open the support page',
+    /* Device panels on the canvas (“Smartphone”/“Tablet”, 06.10.26) */
+    devicePhone: 'Phone',
+    deviceTablet: 'Tablet',
+    deviceNoDelete: "The device panel can't be deleted — it is a system element",
+    deviceFileOk: 'The file is on its way to “{dev}” — it will arrive at the next sync',
+    deviceFileFail: 'Could not send the file to the device',
     }
 }

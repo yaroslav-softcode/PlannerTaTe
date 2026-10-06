@@ -526,6 +526,113 @@ def snapshot() -> str:
     return f"Снимок графа: {out}"
 
 
+# --- Чат «Гермес» в мобильном приложении (06.10.26, просьба Ярослава) ------------------------
+# Сообщения из приложения лежат в hermes_chat.jsonl рядом с graph.json. Агент отвечает
+# инструментом hermes_chat_reply — «кнопка Гермес» на телефоне получает ответ через MCP.
+def _chat_file() -> Path:
+    return GRAPH_FILE.parent / "hermes_chat.jsonl"
+
+
+def _chat_read(limit: int = 30) -> list:
+    items = []
+    try:
+        with open(_chat_file(), encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(rec, dict) and (rec.get("text") or rec.get("file_name")):
+                    items.append(rec)
+    except FileNotFoundError:
+        pass
+    return items[-max(1, min(int(limit or 30), 200)):]
+
+
+@mcp.tool()
+def hermes_chat_read(limit: int = 30) -> str:
+    """Прочитать последние сообщения чата с Ярославом из мобильного приложения PlannerTaTe
+    (кнопка «Гермес» в приложении телефона). Сначала посмотри контекст — потом отвечай.
+    """
+    items = _chat_read(limit)
+    if not items:
+        return "Чат пока пуст."
+    out = []
+    for r in items:
+        who = "Ярослав" if r.get("from") == "user" else "Гермес"
+        line = "[%s] id=%s %s: %s" % (r.get("ts", ""), r.get("id"), who, r.get("text"))
+        if r.get("file_name"):
+            line += "\n[вложение: %s | %s]" % (r.get("file_name"), r.get("file_path") or "")
+        out.append(line)
+    return "\n".join(out)
+
+
+@mcp.tool()
+def hermes_chat_reply(text: str, reply_to: int = 0) -> str:
+    """ОБЯЗАТЕЛЬНОЕ действие: отправить ответ Ярославу в чат мобильного приложения PlannerTaTe
+    (кнопка «Гермес»). Без этого вызова он ответ не увидит!
+    text — текст ответа (по-русски, коротко и по делу); reply_to можно не указывать.
+    """
+    text = (text or "").strip()
+    if not text:
+        return "Ошибка: пустой текст ответа."
+    if not reply_to:
+        users = [r for r in _chat_read(200) if r.get("from") == "user"]
+        if users:
+            reply_to = int(users[-1].get("id") or 0)
+    try:
+        body = json.dumps({"id": reply_to, "text": text}, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(API + "/api/hermes/reply", data=body, method="POST")
+        req.add_header("Content-Type", "application/json; charset=utf-8")
+        req.add_header("X-Plannertate-Client", "1")
+        with urllib.request.urlopen(req, timeout=8) as r:
+            res = json.loads(r.read().decode("utf-8"))
+        return "Ответ отправлен в чат приложения (id %s)." % res.get("id")
+    except Exception as e:
+        # сервер выключен — ответ не теряем: дописываем строку в чат-файл сами
+        try:
+            items = _chat_read(200)
+            nid = max([int(i.get("id") or 0) for i in items] + [0]) + 1
+            rec = {"id": nid, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                   "from": "hermes", "text": text, "reply_to": (reply_to or None)}
+            with open(_chat_file(), "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            return "Ответ записан в чат-файл напрямую (id %d; сервер не ответил: %s)." % (nid, e)
+        except Exception as e2:
+            return "Не получилось отправить ответ: %s" % e2
+
+
+@mcp.tool()
+def hermes_chat_file(path: str, limit: int = 200000) -> str:
+    """Прочитать файл, который Ярослав приложил в чат мобильного приложения (файл лежит на этом
+    компьютере). path — путь из строки «вложение: … | путь» в сообщении чата. Текстовый файл
+    возвращается содержимым (до limit символов); для картинок и других двоичных — только сведения.
+    """
+    p = Path(str(path or "").strip())
+    if not p.is_file():
+        return "Файл не найден: %s" % p
+    try:
+        data = p.read_bytes()
+    except Exception as e:
+        return "Не получилось прочитать файл: %s" % e
+    binary = b"\x00" in data[:4096]
+    text = ""
+    if not binary:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            binary = True
+    if binary or not text.strip():
+        return ("Двоичный файл: %s (%d байт). Показать содержимое я не могу — "
+                "открой его на компьютере." % (p.name, len(data)))
+    if len(text) > limit:
+        text = text[:limit] + "\n…[обрезано, всего %d символов]" % len(text)
+    return "Файл %s (%d байт):\n%s" % (p.name, len(data), text)
+
+
 if __name__ == "__main__":
     _log("PlannerTaTe MCP: граф", GRAPH_FILE, "| API", API)
     mcp.run(transport="stdio")

@@ -27,6 +27,7 @@ notify_state.json
 phone_tasks.json
 backend_run.log
 install_backup_*/
+_local_backups/
 mcp/snapshots/
 
 # Готовое приложение для телефона: пересобирается, но нужно для установки

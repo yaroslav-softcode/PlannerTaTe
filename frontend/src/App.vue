@@ -297,7 +297,9 @@ class RectNode extends LGraphNode {
     // повторений вообще убери»).
     this.remindTime = '09:00'    // 'HH:MM' — во сколько прозвучит
     this.repeatMode = 'once'     // once | daily | weekly | weekdays | monthly
-    this.channels = ['pc']       // куда придёт: pc (Windows) | phone (телефон) | telegram | vkmax — можно несколько
+    // Куда придёт напоминание: pc (Windows) | phone (телефон) | tablet (планшет). По умолчанию
+    // включены ВСЕ ТРИ (просьба Ярослава 06.10.26) — лишний канал снимается галочкой в панели.
+    this.channels = ['pc', 'phone', 'tablet']
     this.inputs = [{ name: 'вход', type: '*', link: null, label: '' }]
     this.outputs = [{ name: 'выход', type: '*', links: null, label: '' }]
     this.hideSlotDots()
@@ -352,6 +354,9 @@ class RectNode extends LGraphNode {
     o.files = fLinks
     o.dimMode = this.dimMode || 'auto'
     o.kind = this.kind || 'task'
+    // Панель устройства: 'phone' | 'tablet' — по нему рисуется глиф устройства и привязываются
+    // задачи, пришедшие с устройства синхронизацией (06.10.26).
+    if (this.kind === 'device') o.device = this.device || 'phone'
     // Поля напоминания — чтобы не потерялись при сохранении в graph.json.
     o.remindTime = this.remindTime || ''
     o.repeatMode = this.repeatMode || 'once'
@@ -363,6 +368,9 @@ class RectNode extends LGraphNode {
   onConfigure() {
     this.bgcolor = 'rgba(0,0,0,0)'
     this.hideSlotDots()
+    // Панель устройства — системная плитка: вход ей не нужен (кольца нет), ресайз запрещён
+    // (LiteGraph эти поля из файла не восстанавливает — задаём при каждой загрузке графа).
+    if ((this.kind || 'task') === 'device') { this.resizable = false; this.inputs = [] }
   }
   // Заводские точки портов LiteGraph рисует своим зелёным (#7F7). Гасим их прозрачным
   // цветом слота — свои порты (кольцо на входе, точка на выходе) рисует тема.
@@ -423,6 +431,7 @@ class RectNode extends LGraphNode {
     const t = theme().node
     const acc = accentOf(this.color)
     const r = Math.max(2, Math.min(t.radius, h / 2, w / 2))
+    if ((this.kind || 'task') === 'device') { this.drawDeviceTile(ctx, t, acc, r); return }
     const statusColor = statusColorOf(this.status || 'none')
 
     // 1. Тело карточки: градиент темы (у «стекла» полупрозрачный — сквозь него виден холст).
@@ -490,11 +499,106 @@ class RectNode extends LGraphNode {
       ctx.restore()
     }
   }
+  // --- Панель устройства («Смартфон»/«Планшет»), 06.10.26 ----------------------------------
+  // Квадратная плитка 56×56: тело как у карточки (палитра активной темы), внутри — глиф
+  // устройства и подпись. Глиф рисуем ЛИНИЯМИ, как значки вложений и будильник: эмодзи
+  // в Windows всегда цветные и не слушаются тем. Порт-точка — сверху по центру, её рисует
+  // onDrawForeground. Плитку нельзя удалить (deleteSelected/duplicateNode не трогают),
+  // задачи с устройства встают к ней детьми, файл с плитки уезжает на устройство.
+  // Параметр темы зовём tm: имя t внутри занято функцией перевода (иначе на каждом кадре
+  // падало «I is not a function» — подпись панели не рисовалась. Баг найден и исправлен 06.10.26).
+  drawDeviceTile(ctx, tm, acc, r) {
+    const w = this.size[0], h = this.size[1]
+    const isTab = this.device === 'tablet'
+    // 1. Тело: градиент темы + тень (как у карточки).
+    ctx.save()
+    if (tm.shadow) { ctx.shadowColor = tm.shadow.color; ctx.shadowBlur = tm.shadow.blur; ctx.shadowOffsetY = tm.shadow.oy || 0 }
+    roundRect(ctx, 0, 0, w, h, r)
+    const g = ctx.createLinearGradient(0, 0, 0, h)
+    g.addColorStop(0, tm.fillTop(acc))
+    g.addColorStop(1, tm.fillBot(acc))
+    ctx.fillStyle = g
+    ctx.fill()
+    ctx.restore()
+    // 2. Рамка: цвет — акцент темы, свечение — из темы (у светлых тем его нет).
+    ctx.save()
+    if (tm.glowBlur) { ctx.shadowColor = tm.glowColor(acc); ctx.shadowBlur = tm.glowBlur; ctx.shadowOffsetY = tm.glowOffsetY || 0 }
+    roundRect(ctx, tm.borderW / 2, tm.borderW / 2, w - tm.borderW, h - tm.borderW, r)
+    ctx.lineWidth = tm.borderW
+    ctx.strokeStyle = tm.border(acc)
+    ctx.stroke()
+    ctx.restore()
+    // 3. Блик по верху внутри — «стекло».
+    if (tm.inner) {
+      ctx.save()
+      roundRect(ctx, 0, 0, w, h, r); ctx.clip()
+      ctx.strokeStyle = tm.inner; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(r * 0.7, 1.2); ctx.lineTo(w - r * 0.7, 1.2); ctx.stroke()
+      ctx.restore()
+    }
+    // 4. Глиф устройства: корпус, экран (подкрашен акцентом), детали.
+    const cx = w / 2
+    ctx.save()
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = tm.titleColor
+    ctx.fillStyle = tm.titleColor
+    ctx.lineWidth = 1.3
+    if (isTab) {
+      const bw = 28, bh = 21, bx = cx - bw / 2, by = 10
+      roundRect(ctx, bx, by, bw, bh, 3); ctx.stroke()
+      ctx.save(); ctx.globalAlpha = 0.30; ctx.fillStyle = acc
+      roundRect(ctx, bx + 2.2, by + 2.2, bw - 4.4, bh - 6.2, 1.5); ctx.fill(); ctx.restore()
+      ctx.beginPath(); ctx.arc(cx, by + bh - 2, 0.9, 0, Math.PI * 2); ctx.fill()
+    } else {
+      const bw = 20, bh = 30, bx = cx - bw / 2, by = 4
+      roundRect(ctx, bx, by, bw, bh, 3.8); ctx.stroke()
+      ctx.save(); ctx.globalAlpha = 0.30; ctx.fillStyle = acc
+      roundRect(ctx, bx + 2, by + 2.8, bw - 4, bh - 8.6, 2); ctx.fill(); ctx.restore()
+      ctx.beginPath(); ctx.moveTo(cx - 3.4, by + 1.6); ctx.lineTo(cx + 3.4, by + 1.6); ctx.stroke()
+      ctx.beginPath(); ctx.arc(cx, by + bh - 2.8, 1.1, 0, Math.PI * 2); ctx.stroke()
+    }
+    ctx.restore()
+    // 5. Подпись: кегль не больше 10 (плитка маленькая), КАПС — как у названий темы.
+    ctx.save()
+    ctx.font = `${tm.titleWeight} ${Math.min(10, tm.titleSize)}px ${tm.titleFamily}`
+    ctx.fillStyle = tm.titleColor
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
+    let label = t(isTab ? 'deviceTablet' : 'devicePhone')
+    if (tm.titleUp) label = label.toUpperCase()
+    ctx.fillText(label, cx, h - 6)
+    ctx.restore()
+  }
+  // Порт панели устройства: ОДНА точка сверху по центру (кольца нет — решение Ярослава 06.10.26).
+  drawDeviceDot(ctx, w, t) {
+    const color = linkColorOf(this.color)
+    ctx.save()
+    ctx.shadowBlur = 0
+    ctx.shadowColor = 'transparent'
+    if (t.portGlow) { ctx.shadowColor = color; ctx.shadowBlur = t.portGlow }
+    ctx.beginPath()
+    ctx.arc(w / 2, 0, PORT.r, 0, Math.PI * 2)
+    ctx.fillStyle = color
+    ctx.fill()
+    if (t.portOutline) {   // тонкий контур, чтобы точка читалась на светлой плитке
+      ctx.shadowBlur = 0
+      ctx.lineWidth = 1
+      ctx.strokeStyle = t.portOutline
+      ctx.stroke()
+    }
+    ctx.restore()
+  }
   // Порты карточки лежат в верхних углах, и все входы сходятся в ОДНУ точку (левый
   // верхний угол): LiteGraph держит по слоту на связь и рисовал бы «лестницу» точек.
   // Здесь же задаём и концы связей — LiteGraph берёт их из этого же метода.
+  // У панели устройства выход — одна точка СВЕРХУ ПО ЦЕНТРУ (06.10.26).
   getConnectionPos(is_input, _slot_number, out) {
     const dst = out || [0, 0]
+    if (!is_input && (this.kind || 'task') === 'device') {
+      dst[0] = this.pos[0] + this.size[0] / 2
+      dst[1] = this.pos[1]
+      return dst
+    }
     const [lx, ly] = portLocalPos(this, !!is_input)
     dst[0] = this.pos[0] + lx
     dst[1] = this.pos[1] + ly
@@ -503,6 +607,9 @@ class RectNode extends LGraphNode {
   onDrawForeground(ctx) {
     const w = this.size[0], h = this.size[1]
     const t = theme().node
+
+    // Панель устройства: кроме точки-порта сверху по центру ничего не рисуем (кольца нет).
+    if ((this.kind || 'task') === 'device') { this.drawDeviceDot(ctx, w, t); return }
 
     // Разметка карточки сверху вниз: название (по центру), описание, нижняя строка —
     // статус слева и срок справа. Каждая зона отъедает высоту у той, что выше, поэтому
@@ -1055,6 +1162,10 @@ async function initCanvas() {
     if (n.file) delete n.file
   }
 
+  // Панели устройств («Смартфон»/«Планшет») — системные плитки: создаём при загрузке,
+  // если их ещё нет (см. ensureDevicePanels).
+  ensureDevicePanels()
+
   // Активное окно в 8 раз больше + содержимое в его середине (см. FIELD_AREA_X).
   applyFieldView()
   armAutoSave()   // с этого момента любое изменение карточек сохраняется автоматически
@@ -1518,6 +1629,51 @@ function createNode(cx, cy) {
   return n
 }
 
+// --- Панели устройств («Смартфон» и «Планшет»), 06.10.26 ------------------------------------
+// Просьба Ярослава: две системные плитки на холсте 56×56. Их нельзя удалить; задача, пришедшая
+// с устройства синхронизацией, встаёт к своей панели РЕБЁНКОМ (связь «панель → задача» ставит
+// backend при приёме задачи, см. _add_phone_task); файл, брошенный на плитку, уезжает на
+// устройство (sendFilesToDevice). Плитки создаются ОДИН раз при загрузке графа, если их ещё нет;
+// место — слева от самой левой карточки, чтобы глаз сразу их находил.
+const DEVICE_SIDE = 56
+function ensureDevicePanels() {
+  if (!graph || readOnly.value) return
+  const have = new Set()
+  let minX = Infinity, minY = Infinity
+  for (const n of (graph._nodes || [])) {
+    if ((n.kind || 'task') === 'device') { have.add(n.device || 'phone'); continue }
+    minX = Math.min(minX, n.pos[0])
+    minY = Math.min(minY, n.pos[1])
+  }
+  const baseX = Math.max(20, (isFinite(minX) ? minX : 210) - 150)
+  const baseY = isFinite(minY) ? minY : 60
+  let made = false
+  for (const [i, dev] of ['phone', 'tablet'].entries()) {
+    if (have.has(dev)) continue
+    const n = new RectNode()
+    n.kind = 'device'
+    n.device = dev
+    n.size = [DEVICE_SIDE, DEVICE_SIDE]
+    n.resizable = false                 // плитка не тянется за уголок
+    n.inputs = []                       // кольца нет — панель только источник связей
+    n.hideSlotDots()
+    n.title = t(dev === 'tablet' ? 'deviceTablet' : 'devicePhone')
+    n.color = '#5b8fd9'
+    graph.add(n)
+    n.pos = [baseX, baseY + i * (DEVICE_SIDE + 20)]
+    made = true
+  }
+  if (made) {
+    liteCanvas.setDirty(true, true)
+    onNodeChange()
+    // Панели фиксируем в graph.json СРАЗУ (находка 06.10.26): armAutoSave «подписывает» граф уже
+    // с панелями, и автосохранение больше не видит изменений — панели могли лежать в памяти
+    // незаписанными. Тогда первая же задача с телефона могла получить id, как у панели, и при
+    // следующем сохранении браузером потерялась бы (слияние считало бы её «усвоенной»).
+    saveGraph(true)
+  }
+}
+
 // Двойной клик по КАРТОЧКЕ — создать пустую подзадачу и связать её с основной
 // (просьба Ярослава 01.10.26: «при двойном клике по задаче создавалась пустая
 // подчинённая задача со связью»). По пустому месту, как и раньше, ничего не создаётся.
@@ -1528,6 +1684,7 @@ function onDblClick(ev) {
   try { parent = graph.getNodeOnPos(gx, gy) } catch (e) {}
   if (!parent) return                 // клик по пустому месту — ничего не создаём
   parent = toRaw(parent)
+  if ((parent.kind || 'task') === 'device') return   // по панели устройства подзадача не создаётся
   selectedNode.value = null           // панель по двойному клику НЕ открываем: она только по ПКМ
   const child = createSubtask(parent)
   if (!child) return
@@ -1581,6 +1738,7 @@ function freeSpotNear(src, skip) {
 function duplicateNode(n) {
   if (!graph || !liteCanvas || !n) return null
   const s = toRaw(n)
+  if ((s.kind || 'task') === 'device') { flash(t('deviceNoDelete')); return null }   // системную панель не копируем
   const copy = graph.add(new RectNode())
   copy.title = s.title
   copy.kind = s.kind || 'task'
@@ -1594,7 +1752,7 @@ function duplicateNode(n) {
   copy.dimMode = s.dimMode || 'auto'
   copy.remindTime = s.remindTime || '09:00'
   copy.repeatMode = s.repeatMode || 'once'
-  copy.channels = Array.isArray(s.channels) ? s.channels.slice() : ['pc']
+  copy.channels = Array.isArray(s.channels) ? s.channels.slice() : ['pc', 'phone', 'tablet']
   copy.size = [s.size[0], s.size[1]]                  // размер уже подогнан под название
   const [cx, cy] = freeSpotNear(s, copy)
   copy.pos = [cx - copy.size[0] / 2, cy - copy.size[1] / 2]
@@ -1994,16 +2152,27 @@ async function pickFileLink(node, initialName = '') {
   } catch (e) { console.error(e); flash(t('filePickFail')) }
 }
 
-// Бросок файла на карточку. ПУТЬ браузер не отдаёт (приватность Chrome) — решение Ярослава
-// 05.10.26: никакого поиска и никакого диалога, в ссылку карточки идёт ИМЯ файла. Имя видно на
-// карточке (значок + подпись), а точный путь уточняется кликом по ссылке (диалог с этим именем).
-function attachDroppedFile(node, f) {
+// Бросок файла на карточку. Путь браузер не отдаёт (защита Chrome), но отдаёт приметы файла:
+// имя, размер и время изменения. Сервер по трём приметам сам находит файл (/api/locate_file)
+// — в ссылку пишется ПОЛНЫЙ путь, без диалогов и ручных действий (просьба Ярослава 06.10.26:
+// «Я не должен совершать каких-либо дополнительных действий — автоматически»). Не нашлось —
+// прежний диалог выбора с подставленным именем (последний шанс); отмена — ссылка не добавляется.
+async function attachDroppedFile(node, f) {
   const n = node && toRaw(node)
   if (!n || !f) return
   if (filesOf(n).length >= MAX_FILES) { flash(t('fileLimit')); return }
   const name = String(f.name || '').trim()
   if (!name) return
-  addFileLink(n, name)
+  try {
+    const r = await fetch('/api/locate_file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Plannertate-Client': '1' },
+      body: JSON.stringify({ name, size: f.size || 0, mtime: (f.lastModified || 0) / 1000 }),
+    })
+    const j = await r.json().catch(() => ({}))
+    if (j.status === 'ok' && j.path) { addFileLink(n, String(j.path)); return }
+  } catch (e) { /* не вышло — ниже диалог */ }
+  pickFileLink(n, name)
 }
 
 // --- Лицензия / поддержка автора (03.10.26, просьба Ярослава) --------------------------------
@@ -2024,6 +2193,41 @@ const showPhone = ref(false)
 const showPhoneAsk = ref(false)
 const installDevice = ref('phone')     // 'phone' | 'tablet' — какая панель установки открыта
 function openInstall(dev) { installDevice.value = dev === 'tablet' ? 'tablet' : 'phone'; showPhone.value = true }
+
+// --- «Установить MCP на Гермес» (06.10.26, просьба Ярослава) ---------------------------------
+// Приложение не ставит MCP само: кнопка показывает готовое сообщение с путями к файлам —
+// его копируют и отправляют Гермесу, и тот всё устанавливает своим ходом.
+const showMcp = ref(false)
+const mcpInfo = ref(null)
+async function openMcpPanel() {
+  showMcp.value = true
+  mcpInfo.value = null
+  try {
+    const r = await fetch('/api/mcp/info')
+    mcpInfo.value = await r.json()
+  } catch (e) {
+    mcpInfo.value = { installed: false, text: '', error: true }
+  }
+}
+async function copyMcpText() {
+  const s = mcpInfo.value && mcpInfo.value.text
+  if (!s) return
+  let ok = false
+  try { await navigator.clipboard.writeText(s); ok = true } catch (e) { ok = false }
+  if (!ok) {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = s
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      ok = document.execCommand('copy')
+      ta.remove()
+    } catch (e) { ok = false }
+  }
+  flash(ok ? t('mcpCopied') : t('mcpCopyFail'))
+}
 // Восстановление из копии (04.10.26, просьба Ярослава): кнопка-значок рядом с «создать копию».
 // Сервер сначала сохраняет текущий граф отдельной копией, потом подменяет файл; после успеха
 // перезагружаем страницу, иначе браузер (он держит граф в памяти) затрёт восстановленное.
@@ -2115,16 +2319,48 @@ async function onLicensePay(row) {
   flash(t('licThanks'))
 }
 
+// имя → путь в списке ссылок карточки: в следующий раз файл откроется сразу (06.10.26).
+function replaceFileInNode(n, name, p) {
+  const cur = filesOf(n).slice()
+  const i = cur.indexOf(name)
+  if (i < 0) return
+  if (cur.indexOf(p) >= 0) cur.splice(i, 1)
+  else cur[i] = p
+  reactive(n).files = cur
+  onNodeChange()
+}
+
+// Ссылка-ИМЯ осталась только у СТАРЫХ карточек (новые ссылки сразу получают полный путь — см.
+// attachDroppedFile). Клик по такому имени просит указать файл (диалог откроется с этим
+// именем), заменяет имя на выбранный полный путь и открывает файл сразу.
+async function resolveFileLink(n, name) {
+  const target = shortFileName(name)
+  try {
+    const r = await fetch('/api/pick_file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Plannertate-Client': '1' },
+      body: JSON.stringify({ name: target }),
+    })
+    const j = await r.json().catch(() => ({}))
+    if (j.status === 'cancel') return                       // закрыл диалог — ничего не делаем
+    if (j.status !== 'ok' || !j.path) { flash(j.error || t('filePickFail')); return }
+    const p = String(j.path)
+    replaceFileInNode(n, name, p)
+    await openFileLink(p, n)
+  } catch (e) { console.error(e); flash(t('filePickFail')) }
+}
+
 // Клик по значку на карточке (и по ссылке в панели) — открыть файл стандартной программой.
 async function openFileLink(path, node = null) {
   const p = String(path || '')
   if (!p) return
   // Ссылка-ИМЯ (так приходит перетаскивание: браузер путь не отдаёт — решение Ярослава 05.10.26).
-  // Открыть нечего, путь неизвестен: предлагаем выбрать файл, диалог откроется с этим именем.
+  // Клик по ней уточняет путь (диалог откроется с этим именем) и открывает файл — resolveFileLink.
   if (!/^[A-Za-z]:[\\/]/.test(p) && !p.startsWith('\\\\') && !p.startsWith('/')) {
     const n = node || nodeWithFile(p)
-    if (n) { pickFileLink(n, shortFileName(p)); return }
-    flash(t('fileOpenFail')); return
+    if (!n) { flash(t('fileOpenFail')); return }
+    await resolveFileLink(n, p)
+    return
   }
   try {
     const r = await fetch('/api/open_file', {
@@ -2140,13 +2376,30 @@ async function openFileLink(path, node = null) {
 // Ctrl+V: картинка из буфера уходит в открытую карточку.
 // В текстовом поле пропускаем вставку только если в буфере есть ещё и обычный текст.
 function onPaste(ev) {
-  const node = selectedNode.value && toRaw(selectedNode.value)
+  // Карточка — как в deleteSelected: сначала Vue-реф (после ПКМ/панели), затем выделение самого
+  // холста (после обычного ЛКМ: LiteGraph хранит выделенное в liteCanvas.selected_nodes, а реф
+  // при ЛКМ не обновляется — только сбрасывается на пустом выделении).
+  const node = (selectedNode.value && toRaw(selectedNode.value))
+    || Object.values((liteCanvas && liteCanvas.selected_nodes) || {})[0]
   if (!node) return
-  const items = Array.prototype.slice.call((ev.clipboardData && ev.clipboardData.items) || [])
-  const img = items.find((it) => it.kind === 'file' && it.type && it.type.indexOf('image/') === 0)
-  if (!img) return   // картинки нет — обычная вставка текста нас не касается
   const t = ev.target
   const inField = !!(t && t.matches && t.matches('input,textarea'))
+  const items = Array.prototype.slice.call((ev.clipboardData && ev.clipboardData.items) || [])
+  const img = items.find((it) => it.kind === 'file' && it.type && it.type.indexOf('image/') === 0)
+  if (!img) {
+    // Картинки нет — может, в буфере АДРЕС файла (скопирован из адресной строки браузера:
+    // file:///C:/…, или путь вида C:\…)? Тогда Ctrl+V при выделенной карточке записывает его
+    // в ссылку (просьба Ярослава 06.10.26: «скопировать адрес файла и записать его в этот
+    // значок»). В текстовом поле не мешаем обычной вставке текста.
+    if (inField) return
+    const txt = (ev.clipboardData && ev.clipboardData.getData('text/plain')) || ''
+    const p = localPathFromUri(txt)
+    if (!p) return
+    if ((node.kind || 'task') === 'notify') { flash(t('fileNoReminder')); return }
+    ev.preventDefault()
+    addFileLink(node, p)
+    return
+  }
   const hasText = items.some((it) => it.kind === 'string' && it.type === 'text/plain')
   if (inField && hasText) return
   const f = img.getAsFile()
@@ -2163,24 +2416,66 @@ function onDragOver(ev) {
 function onCanvasDrop(ev) {
   const dt = ev.dataTransfer
   const f = dt && dt.files && dt.files[0]
-  if (!f) return
+  if (!f) {
+    // Файла в данных нет — возможно, перетащили АДРЕС (ссылку) из адресной строки браузера
+    // (file:///C:/…). Тогда путь записывается в ссылку карточки (06.10.26). Панели устройств
+    // адрес не принимают — им бросают файлы.
+    const txt = dt ? ((dt.getData && (dt.getData('text/uri-list') || dt.getData('text/plain'))) || '') : ''
+    const p = localPathFromUri(txt)
+    if (!p) return
+    ev.preventDefault()
+    const [gx0, gy0] = screenToGraph(ev.clientX, ev.clientY)
+    const node0 = graph.getNodeOnPos(gx0, gy0)
+    if (!node0 || (node0.kind || 'task') === 'device') return
+    if (node0.kind === 'notify') { flash(t('fileNoReminder')); return }
+    addFileLink(node0, p)
+    return
+  }
   // Гасим drop ВСЕГДА, для любого файла: иначе браузер уходит со страницы и открывает файл сам
   // (это был реальный баг — 03.10.26).
   ev.preventDefault()
   const [gx, gy] = screenToGraph(ev.clientX, ev.clientY)
   const node = graph.getNodeOnPos(gx, gy)
   if (!node) return
+  // Панель устройства: ЛЮБОЙ файл, брошенный на плитку, уезжает на устройство (06.10.26).
+  if ((node.kind || 'task') === 'device') { sendFilesToDevice(node, dt.files); return }
   if (f.type && f.type.indexOf('image/') === 0) { attachImage(node, f); return }
   // У напоминания нижнюю строку целиком занимает подпись повторения — значку там нет места,
   // и ссылка была бы невидимой и некликабельной. Говорим прямо, а не делаем вид.
   if (node.kind === 'notify') { flash(t('fileNoReminder')); return }
   // Не картинка — прикладываем как ССЫЛКУ на файл (файл на диске остаётся на месте).
-  // Адрес берём из данных перетаскивания; поиска по дискам при перетаскивании нет (решение
-  // Ярослава 05.10.26). Если адреса нет — откроется диалог выбора файла.
+  // Адрес берём из данных перетаскивания; если адреса нет — сразу откроется диалог выбора
+  // файла, и в ссылку попадёт ПОЛНЫЙ путь (просьба Ярослава 06.10.26).
   const uri = (dt.getData && (dt.getData('text/uri-list') || dt.getData('text/plain'))) || ''
   const local = localPathFromUri(uri)
   if (local) { addFileLink(node, local); return }
   attachDroppedFile(node, f)
+}
+
+// Файл, брошенный на панель устройства: копируем его на сервер в очередь устройства
+// (папка device_files/<phone|tablet> рядом с graph.json). Устройство заберёт файл при
+// ближайшей синхронизации — приём добавим в приложение телефона отдельным шагом
+// (просьба Ярослава 06.10.26: «перетаскиваешь любой файл — он начинает копироваться»).
+async function sendFilesToDevice(node, files) {
+  if (readOnly.value) { roBlocked(); return }
+  const dev = toRaw(node).device === 'tablet' ? 'tablet' : 'phone'
+  const list = Array.prototype.slice.call(files || [])
+  if (!list.length) return
+  let ok = 0
+  for (const f of list) {
+    try {
+      const fd = new FormData()
+      fd.append('file', f, f.name || 'file')
+      const r = await fetch('/api/device/file?device=' + dev, {
+        method: 'POST', body: fd, headers: { 'X-Plannertate-Client': '1' },
+      })
+      const j = await r.json().catch(() => null)
+      if (j && j.status === 'ok') ok++
+    } catch (e) { /* неудача — посчитаем ниже */ }
+  }
+  const devName = t(dev === 'tablet' ? 'deviceTablet' : 'devicePhone')
+  if (ok) flash(t('deviceFileOk').replace('{dev}', devName) + (ok > 1 ? ' ×' + ok : ''))
+  else flash(t('deviceFileFail'))
 }
 
 // Правый клик по карточке: выделить её и открыть inspector с автофокусом на задачу.
@@ -2195,6 +2490,8 @@ function onContextMenu(ev) {
     found = graph.getNodeOnPos(gx, gy)   // LiteGraph hit-test over _nodes (top-most wins)
   } catch (e) {}
   if (!found) return
+  // Панель устройства: панель карточки для неё не открываем — системной плитке править нечего.
+  if ((found.kind || 'task') === 'device') { ev.preventDefault(); ev.stopPropagation(); return }
   ev.preventDefault()
   ev.stopPropagation()   // не даём LiteGraph-обработчику очистить выделение после правого клика
   liteCanvas.selectNode(found)
@@ -2227,6 +2524,8 @@ function deleteSelected() {
   if (readOnly.value) { roBlocked(); return }
   const n = toRaw(selectedNode.value) || Object.values((liteCanvas && liteCanvas.selected_nodes) || {})[0]
   if (!n) return
+  // Панели устройств («Смартфон»/«Планшет») — системные: удалить нельзя (просьба Ярослава 06.10.26).
+  if ((n.kind || 'task') === 'device') { flash(t('deviceNoDelete')); return }
   graph.remove(n)
   selectedNode.value = null
 }
@@ -2411,6 +2710,9 @@ async function loadGraph() {
     graph.configure(data)                 // configure сам чистит старый граф (keep_old не задан)
     graph.setDirtyCanvas(true, true)
     if (liteCanvas) liteCanvas.setDirty(true, true)
+    // Файловые карточки от устройств сразу сжимаем до «максимально низкой» высоты (06.10.26):
+    // название при этом остаётся целым — расчёт см. в fitFileCard.
+    for (const n of graph._nodes || []) if (isDeviceFileCard(n)) fitFileCard(n)
     return true
   } catch (e) { console.error(e); return false }
 }
@@ -2434,6 +2736,7 @@ const FIT_H_MAX = 420    // предохранитель: выше карточ�
 //           2) по кнопке «Сохранить» в панели карточки (просьба Ярослава 01.10.26).
 function fitCardToTitle(node) {
   if (!node || !liteCanvas) return
+  if ((node.kind || 'task') === 'device') return   // системная плитка свой размер не меняет
   const t = theme().node
   const ctx = liteCanvas.ctx
   // Напоминание: на карточке НЕТ названия — в слоте названия стоит время, снизу дата и каналы.
@@ -2483,6 +2786,62 @@ function fitCardToTitle(node) {
   const H = Math.max(cur[1], Math.min(FIT_H_MAX, hNeeded))
   if (Math.abs(W - cur[0]) > 0.5 || Math.abs(H - cur[1]) > 0.5) {
     node.size = [Math.round(W), Math.round(H)]
+    liteCanvas.setDirty(true, true)
+  }
+}
+
+// --- Файловые карточки от устройств: «максимально низко, но название целиком» (06.10.26) ---
+// Карточка-ссылка на файл, приехавший с телефона/планшета (files = путь в device_files/inbox).
+// Высота ставится МИНИМАЛЬНОЙ, при которой по формулам отрисовки название НЕ обрезается:
+// при описании заголовку отдаётся половина высоты (см. отрисовку ближнего плана), поэтому
+// запаса нужно вдвое больше строк названия. Отличие от fitCardToTitle: высота может УМЕНЬШАТЬСЯ.
+function isDeviceFileCard(n) {
+  if (!n || (n.kind || 'task') === 'device') return false
+  const f = filesOf(n)
+  if (f.length !== 1) return false
+  return /device_files[\\/]inbox[\\/]/i.test(String(f[0]))
+}
+
+function fitFileCard(node) {
+  if (!node || !liteCanvas) return
+  const t = theme().node
+  const ctx = liteCanvas.ctx
+  const keepFont = ctx.font
+  const w = Math.max(FIT_W_MIN, Math.round(node.size ? node.size[0] : FIT_W_MIN))
+  const raw = t.titleUp ? String(node.title || '').toUpperCase() : String(node.title || '')
+  if (!raw.trim()) return
+
+  // Нижняя полоса (статус + значок вложения) — теми же формулами, что в отрисовке.
+  const loc = (lang && lang.value) === 'en' ? 'en' : 'ru'
+  const statusText = (STATUS_SHORT[loc] || {})[node.status] || ''
+  const badgeS = t.statusSize            // у карточек-файлов всегда есть значок вложения
+  let footerAsc = Math.round(t.statusSize * 0.72)
+  let footerDesc = Math.round(t.statusSize * 0.2)
+  if (statusText) {
+    ctx.font = `${t.statusWeight} ${t.statusSize}px ${t.statusFamily}`
+    const m = ctx.measureText(statusText)
+    if (m.actualBoundingBoxAscent > 0) footerAsc = m.actualBoundingBoxAscent
+    if (m.actualBoundingBoxDescent > 0) footerDesc = m.actualBoundingBoxDescent
+  }
+  const footerH = Math.round(Math.max(footerAsc + footerDesc + 2 + 4, badgeS ? badgeS + 5 : 0))
+
+  // Название: строки считаем тем же шрифтом и полем, что ближний план (w - 24).
+  ctx.font = `${t.titleWeight} ${t.titleSize}px ${t.titleFamily}`
+  const lines = wrapText(ctx, raw, w - 24).length
+  const titleBlock = lines * Math.max(t.titleLine || 15, 12)
+  ctx.font = keepFont
+  // Надпись «Файл с телефона/планшета» не нужна (просьба Ярослава 06.10.26: связь с панелью
+  // и так показывает источник) — у старых карточек из графа убираем её здесь же.
+  const d = String(node.description || '').trim()
+  if (d === 'Файл с телефона' || d === 'Файл с планшета' ||
+      d === 'File from phone' || d === 'File from tablet') node.description = ''
+  const hasDesc = String(node.description || '').trim().length > 0
+  // Заголовку при описании отрисовка отдаёт половину доступной высоты — отсюда ×2 (+4 — запас).
+  const need = hasDesc ? 2 * titleBlock + 4 : titleBlock + 4
+  const H = Math.max(28, Math.round(footerH + need))
+  const cur = node.size || [w, H]
+  if (Math.abs(H - cur[1]) > 0.5 || Math.abs(w - cur[0]) > 0.5) {
+    node.size = [w, H]
     liteCanvas.setDirty(true, true)
   }
 }
@@ -2542,7 +2901,9 @@ function fillReminderDefaults(node, src) {
   node.due = todayISO()
   node.remindTime = defaultRemindTime()
   node.repeatMode = 'once'
-  node.channels = ['pc']
+  // Все три канала по умолчанию (просьба Ярослава 06.10.26): компьютер + телефон + планшет;
+  // ненужные снимаются галочками в панели напоминания.
+  node.channels = ['pc', 'phone', 'tablet']
 }
 // Создать напоминание рядом с исходной карточкой и связать их (родитель → напоминание).
 function addNotifyFrom(src) {
@@ -2784,6 +3145,10 @@ onBeforeUnmount(() => {
         <button class="btn" @click="openInstall('phone')"><span class="emo">📱</span> {{ t('phoneBtn') }}</button>
         <button class="btn" @click="openInstall('tablet')"><span class="emo">📟</span> {{ t('phoneBtnTab') }}</button>
 
+        <!-- «Установить MCP на Гермес» (06.10.26, просьба Ярослава): готовое сообщение с файлами —
+             его копируют и отправляют Гермесу, тот подключает сервер сам. -->
+        <button class="btn" @click="openMcpPanel"><span class="emo mcp-girl" aria-hidden="true"></span> {{ t('mcpBtn') }}</button>
+
         <div class="foot-row">
           <button v-if="!readOnly" class="icon-btn" :title="t('backupTitle')" @click="makeBackup"><span class="emo">💾</span></button>
           <button v-if="!readOnly" class="icon-btn" :title="t('restoreTitle')" @click="showRestore = true"><span class="emo">♻️</span></button>
@@ -2815,12 +3180,12 @@ onBeforeUnmount(() => {
     <!-- Холст -->
     <div id="canvasWrap" class="canvas-wrap">
       <canvas id="canvasEl" ref="canvasEl"></canvas>
-      <LiteInspector v-if="selectedNode && selectedNode.kind !== 'notify'" :node="selectedNode" :lang="lang" :x="inspectorPos.x" :y="inspectorPos.y" @delete="deleteSelected" @save="saveAndCloseInspector" @notify="inspAddNotify" @change="onNodeChange" @view="viewImage = $event" @image="attachImage(selectedNode, $event)"
+      <LiteInspector v-if="selectedNode && selectedNode.kind !== 'notify' && selectedNode.kind !== 'device'" :node="selectedNode" :lang="lang" :x="inspectorPos.x" :y="inspectorPos.y" @delete="deleteSelected" @save="saveAndCloseInspector" @notify="inspAddNotify" @change="onNodeChange" @view="viewImage = $event" @image="attachImage(selectedNode, $event)"
                  @pick="pickFileLink(selectedNode)" @open="(p) => openFileLink(p, selectedNode)" />
       <!-- Напоминание редактируется СВОЕЙ панелью: нет подзадач, рисунка и статуса; задача и
            описание показаны серым (скопированы с основной карточки), есть дата/время, количество
            и повторения, каналы доставки. -->
-      <ReminderPanel v-else-if="selectedNode" :node="selectedNode" :lang="lang" :x="inspectorPos.x" :y="inspectorPos.y" @delete="deleteSelected" @save="saveAndCloseInspector" @change="onNodeChange" />
+      <ReminderPanel v-else-if="selectedNode && selectedNode.kind !== 'device'" :node="selectedNode" :lang="lang" :x="inspectorPos.x" :y="inspectorPos.y" @delete="deleteSelected" @save="saveAndCloseInspector" @change="onNodeChange" />
       <!-- Панель лицензии: «Оцените приложение», четыре строки с выбором, внизу сумма и «Оплатить». -->
     <LicensePanel v-if="showLicense" :lang="lang" :x="24" :y="70"
                   @close="showLicense = false" @pay="onLicensePay" />
@@ -2838,6 +3203,22 @@ onBeforeUnmount(() => {
         <div class="phone-ask-btns">
           <button class="phone-ask-yes" @click="phoneAskYes">{{ t('phoneAskYes') }}</button>
           <button class="phone-ask-later" @click="phoneAskLater">{{ t('phoneAskLater') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- «Установить MCP на Гермес»: статус и готовое сообщение для Гермеса (06.10.26) -->
+    <div v-if="showMcp" class="phone-ask-wrap" @click.self="showMcp = false">
+      <div class="phone-ask mcp-ask">
+        <div class="phone-ask-q">{{ t('mcpTitle') }}</div>
+        <div class="mcp-status" :class="{ ok: mcpInfo && mcpInfo.installed }">
+          {{ mcpInfo == null ? t('mcpChecking') : (mcpInfo.installed ? t('mcpInstalled') : t('mcpNotInstalled')) }}
+        </div>
+        <div class="mcp-about">{{ t('mcpAbout') }}</div>
+        <pre v-if="mcpInfo && mcpInfo.text" class="mcp-text">{{ mcpInfo.text }}</pre>
+        <div class="phone-ask-btns">
+          <button v-if="mcpInfo && mcpInfo.text" class="phone-ask-yes" @click="copyMcpText">{{ t('mcpCopy') }}</button>
+          <button class="phone-ask-later" @click="showMcp = false">{{ t('close') }}</button>
         </div>
       </div>
     </div>
@@ -2889,10 +3270,14 @@ onBeforeUnmount(() => {
   max-width: 420px;
   padding: 22px 22px 16px;
   border-radius: 14px;
-  background: var(--card, #2a2a2e);
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
-  color: var(--foreground, #e8e8e8);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  /* Цвета — из темы приложения (06.10.26, просьба Ярослава): как у панелей (.inspector/.ph).
+     Раньше здесь стояли имена --card/--border/--foreground, которых нет ни в одной теме, —
+     окно всегда рисовалось запасными тёмными цветами и выбивалось из светлых тем. */
+  background: var(--panel-bg, #2a2a2e);
+  border: 1px solid var(--panel-border, rgba(127, 127, 127, 0.35));
+  color: var(--text, #e8e8e8);
+  box-shadow: var(--panel-shadow, 0 18px 48px rgba(0, 0, 0, 0.45));
+  backdrop-filter: var(--panel-blur, none);
 }
 .phone-ask-q { font-size: 16px; line-height: 1.4; margin-bottom: 16px; }
 .phone-ask-btns { display: flex; gap: 10px; justify-content: flex-end; }
@@ -2902,8 +3287,41 @@ onBeforeUnmount(() => {
   font-size: 14px;
   cursor: pointer;
 }
-.phone-ask-yes { border: none; background: #e08a3c; color: #1c1c1c; font-weight: 600; }
-.phone-ask-later { border: 1px solid var(--border, rgba(127, 127, 127, 0.4)); background: transparent; color: var(--foreground, #e8e8e8); }
+/* Кнопки меню — в цветах темы, как .btn.primary / .btn (06.10.26, просьба Ярослава). */
+.phone-ask-yes {
+  border: none; font-weight: 600;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: var(--primary-text, #fff);
+  box-shadow: var(--shadow-primary);
+}
+.phone-ask-yes:hover { filter: brightness(1.1); }
+.phone-ask-later {
+  border: 1px solid var(--btn-border, rgba(127, 127, 127, 0.4));
+  background: var(--btn-bg, transparent);
+  color: var(--btn-text, #e8e8e8);
+}
+.phone-ask-later:hover { background: var(--btn-hover, rgba(127, 127, 127, 0.15)); }
+/* Окно «Установить MCP на Гермес» (06.10.26): шире обычного, текст сообщения — моноширинный */
+.mcp-ask { max-width: 640px; }
+.mcp-status { font-size: 13px; color: #e08a3c; margin-bottom: 8px; }
+.mcp-status.ok { color: #7bc67b; }
+.mcp-about { font-size: 13px; line-height: 1.45; color: var(--muted, #99a0c0); margin-bottom: 10px; }
+/* Значок «Гермес» у кнопки MCP (06.10.26, просьба Ярослава): чёрно-белая «девочка» из логотипа
+   Hermes. Цвет берём от текста кнопки (маска + currentColor) — читается в любой из тем. */
+.mcp-girl {
+  display: inline-block; width: 1.15em; height: 1.15em; background: currentColor;
+  vertical-align: -0.18em;
+  -webkit-mask: url(/hermes-girl.png) center / contain no-repeat;
+  mask: url(/hermes-girl.png) center / contain no-repeat;
+}
+.mcp-text {
+  white-space: pre-wrap; word-break: break-word; text-align: left;
+  font: 12px/1.5 ui-monospace, Consolas, monospace;
+  background: var(--input-bg, rgba(127, 127, 127, 0.10));
+  border: 1px solid var(--input-border, rgba(127, 127, 127, 0.35));
+  border-radius: 8px; padding: 10px; margin: 0 0 14px 0;
+  max-height: 300px; overflow: auto;
+}
 /* Все стили интерфейса — в src/styles.css (переменные трёх тем + классы).
    Здесь оставлено только то, что относится к самому компоненту. */
 canvas#canvasEl { width: 100%; height: 100%; display: block; touch-action: none; }
