@@ -1719,19 +1719,24 @@ function createNode(cx, cy) {
 // с устройства синхронизацией, встаёт к своей панели РЕБЁНКОМ (связь «панель → задача» ставит
 // backend при приёме задачи, см. _add_phone_task); файл, брошенный на плитку, уезжает на
 // устройство (sendFilesToDevice). Плитки создаются ОДИН раз при загрузке графа, если их ещё нет;
-// место — слева от самой левой карточки, чтобы глаз сразу их находил.
+// место — слева от самой левой карточки, чтобы глаз сразу их находил; если слева места нет
+// (карточки стоят у самого края), плитки встают НИЖЕ всего плана, чтобы ничего не накрывать
+// (просьба Ярослава 06.10.26: под «Смартфоном» карточки быть не должно).
 const DEVICE_SIDE = 56
 function ensureDevicePanels() {
   if (!graph || readOnly.value) return
   const have = new Set()
-  let minX = Infinity, minY = Infinity
+  let minX = Infinity, minY = Infinity, maxBottom = -Infinity
   for (const n of (graph._nodes || [])) {
     if ((n.kind || 'task') === 'device') { have.add(n.device || 'phone'); continue }
     minX = Math.min(minX, n.pos[0])
     minY = Math.min(minY, n.pos[1])
+    maxBottom = Math.max(maxBottom, n.pos[1] + (Array.isArray(n.size) ? n.size[1] : DEVICE_SIDE))
   }
-  const baseX = Math.max(20, (isFinite(minX) ? minX : 210) - 150)
-  const baseY = isFinite(minY) ? minY : 60
+  const leftRoom = isFinite(minX) ? minX - 150 : Infinity   // есть ли ~150 px слева от плана
+  const baseX = leftRoom >= 20 ? leftRoom : (isFinite(minX) ? minX : 20)
+  const baseY = leftRoom >= 20 ? (isFinite(minY) ? minY : 60)
+                              : (isFinite(maxBottom) ? maxBottom + 40 : 60)
   let made = false
   for (const [i, dev] of ['phone', 'tablet'].entries()) {
     if (have.has(dev)) continue
