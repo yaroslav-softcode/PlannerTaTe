@@ -5,7 +5,7 @@
 ; Данные (граф, ключ) живут в %APPDATA%\PlannerTaTe и при удалении НЕ трогаются.
 
 #define AppName "PlannerTaTe"
-#define AppVersion "1.2"
+#define AppVersion "1.3"
 #define AppExe "PlannerTaTe.exe"
 #define AppPublisher "Ярослав Хмелев"
 
@@ -30,7 +30,7 @@ WizardStyle=modern
 AppMutex=PlannerTaTe_Single_Instance
 CloseApplications=yes
 RestartApplications=no
-VersionInfoVersion=1.2.0.0
+VersionInfoVersion=1.3.0.0
 VersionInfoCompany={#AppPublisher}
 VersionInfoDescription=Установка {#AppName} — планировщика задач
 VersionInfoProductName={#AppName}

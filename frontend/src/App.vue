@@ -140,20 +140,14 @@ function updateField() {
 let viewScale = 1           // текущий зум холста (обновляет хук onDrawBackground)
 const ARROW_LEN = 9        // длина треугольника-указателя направления связи (координаты графа)
 
-// Порты карточки — вариант 1 набора (вернул Ярослав 30.09.26): вход — КОЛЬЦО, выход — ТОЧКА,
-// врезаны в верхние углы (центр на дуге скругления, как полоса статуса). Одна формула на всё:
-// отрисовку, концы связей (getConnectionPos) и попадание мышью.
+// Порты карточки — просьба Ярослава 06.10.26: вход — КОЛЬЦО, выход — ТОЧКА; оба стоят НА СЕРЕДИНЕ
+// СТОРОН и всегда на ПРОТИВОПОЛОЖНЫХ сторонах. «Флип» — это когда вход и выход МЕНЯЮТСЯ МЕСТАМИ:
+// подзадача уехала левее родителя — у родителя выход уезжает налево, вход направо; у подзадачи
+// вход направо, выход налево (расчёт сторон — portSides). Одна формула на всё: отрисовку, концы
+// связей (getConnectionPos) и попадание мышью.
 const PORT = {
   r: 4.2,                 // радиус порта (координаты графа)
   ring: 2.2,              // толщина кольца на входе
-  out: 0,                 // сдвиг центра наружу от дуги скругления
-  minCorner: 3,
-}
-function portOffset() {
-  // точка на дуге скругления под 45°: R − R/√2 ≈ 0.293·R (для скругления < 10px не ниже 3px)
-  const R = theme().node.radius || 10
-  const onArc = Math.max(PORT.minCorner, R * 0.293)
-  return Math.max(0.4, Math.round((onArc - PORT.out) * 10) / 10)
 }
 // Кнопка «открыть описание целиком» — лупа с плюсом внутри (просьба Ярослава 05.10.26).
 // Рисуем линиями, цветом текста карточки: у эмодзи на Windows свои цвета, а карточка должна
@@ -180,9 +174,44 @@ function drawZoomBtn(ctx, cx, cy, size, color) {
   ctx.restore()
 }
 
-function portLocalPos(node, isInput) {
-  const d = portOffset()
-  return isInput ? [d, d] : [node.size[0] - d, d]
+// Локальная точка порта: СЕРЕДИНА стороны (side: 'left' | 'right').
+function portLocalPos(node, side) {
+  const w = node.size[0], h = node.size[1]
+  return side === 'left' ? [0, h / 2] : [w, h / 2]
+}
+// Стороны портов карточки: у неё ОДИН вход (кольцо) и ОДИН выход (точка), и они всегда на
+// противоположных сторонах. Стороны считаем по связям: вход «смотрит» на свои источники (если
+// все источники слева — кольцо слева; если подзадача левее родителя — у родителя кольцо уезжает
+// направо), выход — на свои цели. Пустой порт встаёт напротив занятого; если и вход, и выход
+// указывают в одну сторону — вход уступает выходу и уезжает на противоположную (так на карточке
+// всегда видны ОБА порта, без наложений). Возвращает { in, out, hasIn, hasOut }.
+function portSides(node) {
+  const g = node.graph
+  let inL = 0, inR = 0, outL = 0, outR = 0
+  if (g) {
+    const ins = node.inputs || []
+    for (const s of ins) {
+      const l = (s && s.link != null) ? g.links[s.link] : null
+      const o = l ? g.getNodeById(l.origin_id) : null
+      if (o) { if (o.pos[0] < node.pos[0]) inL++; else inR++ }
+    }
+    const outs = node.outputs || []
+    for (const s of outs) {
+      for (const lid of ((s && s.links) || [])) {
+        const l = g.links[lid]
+        const t = l ? g.getNodeById(l.target_id) : null
+        if (t) { if (t.pos[0] < node.pos[0]) outL++; else outR++ }
+      }
+    }
+  }
+  const hasIn = (inL + inR) > 0, hasOut = (outL + outR) > 0
+  let inSide = hasIn ? (inL > inR ? 'left' : inR > inL ? 'right' : 'left') : null
+  let outSide = hasOut ? (outL > outR ? 'left' : outR > outL ? 'right' : 'right') : null
+  if (!inSide && !outSide) { inSide = 'left'; outSide = 'right' }
+  else if (!inSide) inSide = (outSide === 'left') ? 'right' : 'left'
+  else if (!outSide) outSide = (inSide === 'left') ? 'right' : 'left'
+  if (inSide === outSide) inSide = (outSide === 'left') ? 'right' : 'left'   // вход уступает выходу
+  return { in: inSide, out: outSide, hasIn, hasOut }
 }
 // Будильник для монохромной темы: чашечка-циферблат, две «ножки», кнопка и стрелки — всё линиями
 // цветом текста карточки (эмодзи ⏰ в Windows всегда цветной, поэтому знак рисуем сами).
@@ -204,19 +233,17 @@ function drawBellMono(ctx, cx, top, size, color) {
   ctx.restore()
 }
 
-// Цвет порта: вход — цвет входящей связи, выход — акцент самой карточки.
+// Цвет порта: вход — цвет входящей связи ЭТОГО слота, выход — акцент самой карточки.
 // Свободный порт (нет связей) отдаём теме — см. portIdle в themes.js.
-function portColor(node, isInput) {
+function portColor(node, isInput, slot) {
   const g = node.graph
   if (!g) return null
   if (!isInput) return linkColorOf(node.color)
-  const links = g.links || {}
-  for (const id in links) {
-    const l = links[id]
-    if (l && l.target_id == node.id) {
-      const src = g.getNodeById(l.origin_id)
-      if (src) return linkColorOf(src.color)
-    }
+  const il = node.inputs && node.inputs[slot]
+  const l = (il && il.link != null) ? g.links[il.link] : null
+  if (l) {
+    const src = g.getNodeById(l.origin_id)
+    if (src) return linkColorOf(src.color)
   }
   return null
 }
@@ -377,7 +404,10 @@ class RectNode extends LGraphNode {
   hideSlotDots() {
     for (const list of [this.inputs, this.outputs]) {
       if (!list) continue
-      for (const s of list) { s.color_on = 'rgba(0,0,0,0)'; s.color_off = 'rgba(0,0,0,0)' }
+      for (const s of list) {
+        s.color_on = 'rgba(0,0,0,0)'; s.color_off = 'rgba(0,0,0,0)'
+        s.label = ''   // иначе LiteGraph пишет у слота его имя — «вход»/«выход» (замечание Ярослава)
+      }
     }
   }
   // LiteGraph.addInput() внутри делает setSize(this.computeSize()) — это пересчитывает размер
@@ -388,6 +418,15 @@ class RectNode extends LGraphNode {
     this.size = [100, 56]
     this.hideSlotDots()   // новый слот тоже не должен рисовать заводскую зелёную точку
     return input
+  }
+  // Симметрично: LiteGraph.addOutput() тоже внутри пересчитывает размер (setSize(computeSize())),
+  // ломая утверждённый размер карточки 100×56 и плитки 56×56. Возвращаем размер как был.
+  addOutput(name, type, extra_info) {
+    const keep = [this.size[0], this.size[1]]
+    const output = super.addOutput(name, type, extra_info)
+    this.size = keep
+    this.hideSlotDots()
+    return output
   }
   // Несколько карточек на один вход: при подключении к уже занятому слоту создаём новый пустой.
   onBeforeConnectInput(target_slot) {
@@ -413,7 +452,7 @@ class RectNode extends LGraphNode {
     return target_slot
   }
   // Одна связь между двумя задачами: отменяем попытку повторно привязать тот же узел к тому же целевому.
-  // Работает как для драг-дроп, так и для программного connect(). Разные узлы на один приёмник (fan-in) не блокируются — у них другой origin_id.
+  // Работает как для драг-дропа, так и для программного connect(). Разные узлы на один приёмник (fan-in) не блокируются — у них другой origin_id.
   onConnectOutput(slot, inputType, input, target_node) {
     if (!this.graph || !target_node) return true
     for (const id in this.graph.links) {
@@ -424,6 +463,10 @@ class RectNode extends LGraphNode {
     }
     return true
   }
+  // Раскладывать исходящие связи по слотам больше не нужно: сторона порта общая на карточку
+  // (см. portSides), все выходные слоты рисуются в ОДНУ точку-выход.
+  // Дубль «этот же источник → этот же приёмник» отбивает onConnectOutput выше, остальное —
+  // заводское поведение LiteGraph.
   // Вся внешность карточки берётся из активной темы (палитра — src/themes.js),
   // цвет-акцент — это выбор пользователя (node.color), он же рамка и полоса.
   onDrawBackground(ctx) {
@@ -502,7 +545,7 @@ class RectNode extends LGraphNode {
   // --- Панель устройства («Смартфон»/«Планшет»), 06.10.26 ----------------------------------
   // Квадратная плитка 56×56: тело как у карточки (палитра активной темы), внутри — глиф
   // устройства и подпись. Глиф рисуем ЛИНИЯМИ, как значки вложений и будильник: эмодзи
-  // в Windows всегда цветные и не слушаются тем. Порт-точка — сверху по центру, её рисует
+  // в Windows всегда цветные и не слушаются тем. Порт-точка — на середине обращённой стороны,
   // onDrawForeground. Плитку нельзя удалить (deleteSelected/duplicateNode не трогают),
   // задачи с устройства встают к ней детьми, файл с плитки уезжает на устройство.
   // Параметр темы зовём tm: имя t внутри занято функцией перевода (иначе на каждом кадре
@@ -569,47 +612,81 @@ class RectNode extends LGraphNode {
     ctx.fillText(label, cx, h - 6)
     ctx.restore()
   }
-  // Порт панели устройства: ОДНА точка сверху по центру (кольца нет — решение Ярослава 06.10.26).
-  drawDeviceDot(ctx, w, t) {
+  // Порт панели устройства: точка на СЕРЕДИНЕ ОБРАЩЁННОЙ СТОРОНЫ (кольца нет — решение Ярослава
+  // 06.10.26; место перенесено с верхнего центра 06.10.26 по его же просьбе: у «Смартфона» точка
+  // справа по центру, у «Планшета» — слева, а если задача уехала на другую сторону — плитка
+  // переворачивается, как обычная карточка). Задач с двух сторон — две точки.
+  drawDeviceDot(ctx, t) {
     const color = linkColorOf(this.color)
-    ctx.save()
-    ctx.shadowBlur = 0
-    ctx.shadowColor = 'transparent'
-    if (t.portGlow) { ctx.shadowColor = color; ctx.shadowBlur = t.portGlow }
-    ctx.beginPath()
-    ctx.arc(w / 2, 0, PORT.r, 0, Math.PI * 2)
-    ctx.fillStyle = color
-    ctx.fill()
-    if (t.portOutline) {   // тонкий контур, чтобы точка читалась на светлой плитке
+    for (const pt of this.portPoints(false)) {
+      ctx.save()
       ctx.shadowBlur = 0
-      ctx.lineWidth = 1
-      ctx.strokeStyle = t.portOutline
-      ctx.stroke()
+      ctx.shadowColor = 'transparent'
+      if (t.portGlow) { ctx.shadowColor = color; ctx.shadowBlur = t.portGlow }
+      ctx.beginPath()
+      ctx.arc(pt.lx, pt.ly, PORT.r, 0, Math.PI * 2)
+      ctx.fillStyle = color
+      ctx.fill()
+      if (t.portOutline) {   // тонкий контур, чтобы точка читалась на светлой плитке
+        ctx.shadowBlur = 0
+        ctx.lineWidth = 1
+        ctx.strokeStyle = t.portOutline
+        ctx.stroke()
+      }
+      ctx.restore()
     }
-    ctx.restore()
   }
-  // Порты карточки лежат в верхних углах, и все входы сходятся в ОДНУ точку (левый
-  // верхний угол): LiteGraph держит по слоту на связь и рисовал бы «лестницу» точек.
-  // Здесь же задаём и концы связей — LiteGraph берёт их из этого же метода.
-  // У панели устройства выход — одна точка СВЕРХУ ПО ЦЕНТРУ (06.10.26).
-  getConnectionPos(is_input, _slot_number, out) {
+  // Концы связей и точки портов. Сторона порта — общая на карточку (portSides): вход всегда на
+  // одной стороне, выход — на противоположной; все входящие сходятся в КОЛЬЦО, все исходящие
+  // выходят из ТОЧКИ. «Флип» (вход и выход поменялись местами) пересчитывается на лету из
+  // расположения карточек. Плитка устройства: точка-выход на обращённой стороне (без связей
+  // базово: «Смартфон» — справа, «Планшет» — слева, просьба Ярослава 06.10.26).
+  // Пока тянется новая связь, вход без единой входящей показываем на стороне драга — бросить
+  // связь можно с любой стороны; после создания она встанет по общему правилу.
+  getConnectionPos(is_input, slot_number, out) {
     const dst = out || [0, 0]
-    if (!is_input && (this.kind || 'task') === 'device') {
-      dst[0] = this.pos[0] + this.size[0] / 2
-      dst[1] = this.pos[1]
-      return dst
+    const isDevice = (this.kind || 'task') === 'device'
+    const ps = portSides(this)
+    let side = is_input ? ps.in : ps.out
+    if (isDevice) side = ps.hasOut ? ps.out : (this.device === 'tablet' ? 'left' : 'right')
+    if (is_input && !ps.hasIn && liteCanvas && liteCanvas.connecting_output &&
+        liteCanvas.connecting_node && liteCanvas.connecting_node !== this) {
+      const c = liteCanvas.connecting_node
+      side = (c.pos[0] < this.pos[0]) ? 'left' : 'right'   // целимся туда, откуда тянут
     }
-    const [lx, ly] = portLocalPos(this, !!is_input)
+    const [lx, ly] = portLocalPos(this, side)
     dst[0] = this.pos[0] + lx
     dst[1] = this.pos[1] + ly
+    // Направление конца линии — по стороне порта: линия из левого края сначала уходит ВЛЕВО и
+    // лишь потом изгибается к задаче (поправка Ярослава 06.10.26 — сплайн загибался не туда).
+    const slot = is_input ? (this.inputs || [])[slot_number] : (this.outputs || [])[slot_number]
+    if (slot) slot.dir = (side === 'left') ? LiteGraph.LEFT : LiteGraph.RIGHT
     return dst
+  }
+  // Уникальные локальные точки портов (для отрисовки): входы или выходы. Несколько слотов,
+  // сходящихся в одну точку (fan-in), дают одну точку; цвет берём у первого слота со связью.
+  portPoints(isInput) {
+    const list = isInput ? this.inputs : this.outputs
+    const seen = new Map()
+    if (list) {
+      for (let i = 0; i < list.length; i++) {
+        const p = this.getConnectionPos(!!isInput, i)
+        const lx = Math.round(p[0] - this.pos[0]), ly = Math.round(p[1] - this.pos[1])
+        const k = lx + ':' + ly
+        const filled = isInput ? (list[i].link != null) : !!(list[i].links && list[i].links.length)
+        const prev = seen.get(k)
+        if (!prev) seen.set(k, { lx, ly, slot: i, filled })
+        else if (filled && !prev.filled) { prev.slot = i; prev.filled = true }
+      }
+    }
+    return Array.from(seen.values())
   }
   onDrawForeground(ctx) {
     const w = this.size[0], h = this.size[1]
     const t = theme().node
 
-    // Панель устройства: кроме точки-порта сверху по центру ничего не рисуем (кольца нет).
-    if ((this.kind || 'task') === 'device') { this.drawDeviceDot(ctx, w, t); return }
+    // Панель устройства: кроме точки-порта на середине обращённой стороны ничего не рисуем (кольца нет).
+    if ((this.kind || 'task') === 'device') { this.drawDeviceDot(ctx, t); return }
 
     // Разметка карточки сверху вниз: название (по центру), описание, нижняя строка —
     // статус слева и срок справа. Каждая зона отъедает высоту у той, что выше, поэтому
@@ -912,11 +989,12 @@ class RectNode extends LGraphNode {
       ctx.restore()
     }
 
-    // Порты (вариант 1): вход — кольцо, выход — точка; оба в цвете связи, врезаны в угол.
-    // Рисуем последними, чтобы были поверх текста и по ним удобно было тянуть связь.
-    const drawPort = (isInput) => {
-      const color = portColor(this, isInput) || t.portIdle
-      const [px, py] = portLocalPos(this, isInput)
+    // Порты (06.10.26): вход — кольцо, выход — точка, оба НА СЕРЕДИНЕ СТОРОН и всегда на
+    // ПРОТИВОПОЛОЖНЫХ сторонах: при перетаскивании вход и выход «флипаются» — меняются местами
+    // (см. portSides/getConnectionPos; у плиток свои базовые стороны). Рисуем последними, чтобы
+    // были поверх текста и по ним удобно было тянуть связь.
+    const drawPortAt = (isInput, pt) => {
+      const color = portColor(this, isInput, pt.slot) || t.portIdle
       ctx.save()
       // Тени/свечения у портов нет (portGlow = 0 в темах, просьба Ярослава): гасим явно,
       // чтобы порт не подхватил тень от карточки, нарисованной до него.
@@ -929,12 +1007,12 @@ class RectNode extends LGraphNode {
         // (у точки в темах A/B есть ещё тонкий контур 1px, поэтому внешний радиус = r + 0.5).
         // Раньше обводка шла по радиусу r и кольцо выглядело крупнее точки.
         const dotOuter = PORT.r + (t.portOutline ? 0.5 : 0)
-        ctx.arc(px, py, dotOuter - PORT.ring / 2, 0, Math.PI * 2)
+        ctx.arc(pt.lx, pt.ly, dotOuter - PORT.ring / 2, 0, Math.PI * 2)
         ctx.lineWidth = PORT.ring
         ctx.strokeStyle = color
         ctx.stroke()
       } else {
-        ctx.arc(px, py, PORT.r, 0, Math.PI * 2)
+        ctx.arc(pt.lx, pt.ly, PORT.r, 0, Math.PI * 2)
         ctx.fillStyle = color
         ctx.fill()
         if (t.portOutline) {   // тонкий контур, чтобы точка читалась на светлой карточке
@@ -946,8 +1024,8 @@ class RectNode extends LGraphNode {
       }
       ctx.restore()
     }
-    drawPort(true)
-    drawPort(false)
+    for (const pt of this.portPoints(true)) drawPortAt(true, pt)
+    for (const pt of this.portPoints(false)) drawPortAt(false, pt)
 
     ctx.textAlign = 'left'
     ctx.textBaseline = 'alphabetic'
@@ -1023,13 +1101,14 @@ const canvasEl = ref(null)
 // Подсказка у значка ссылки: { x, y, name, path } или null (Ярослав 03.10.26).
 const fileTip = ref(null)
 // Тема: 'a' — стекло, 'b' — неон, 'c' — светлая. Выбор запоминается в localStorage.
-// Если сохранена тема, которой больше нет в списке выбора (спрятана) — стартуем со стандартной.
+// Тема по умолчанию — «Неон» (b; просьба Ярослава 06.10.26). Если сохранена тема, которой
+// больше нет в списке выбора (спрятана) — стартуем с темы по умолчанию.
 const savedTheme = localStorage.getItem('plannertate_theme')
 // Был ли у ЭТОГО браузера свой выбор темы. Нужно, чтобы сообщать телефону тему только со своего
 // компьютера и только когда выбор действительно сделан: иначе чужой браузер в сети (или свежий
 // профиль) при открытии страницы затёр бы тему хозяина своей, по умолчанию (03.10.26).
 const hadSavedTheme = THEME_IDS.includes(savedTheme)
-const themeName = ref(hadSavedTheme ? savedTheme : 'a')
+const themeName = ref(hadSavedTheme ? savedTheme : 'b')
 // 30.09.26: тем стало 12, поэтому в сайдбаре видна только активная, а полный список
 // (все 12 с мини-превью) открывается по клику. Просьба Ярослава: «сделать так, чтобы
 // они все не представлялись, а там можно было выбирать какую тему».
@@ -1377,6 +1456,12 @@ function applyCanvasTheme(lc) {
       if (glow) {
         ctx.shadowBlur = glow
         ctx.shadowColor = (typeof c === 'string' && c[0] === '#') ? rgba(c, th.canvas.linkGlowAlpha) : c
+      }
+      // Призрак новой связи при перетаскивании: LiteGraph зовёт renderLink без направлений —
+      // подставляем сторону выхода карточки, откуда тянут (левый порт тянет линию влево).
+      if (start_dir == null && this.connecting_output && this.connecting_node) {
+        const ps = portSides(this.connecting_node)
+        start_dir = (ps.out === 'left') ? LiteGraph.LEFT : LiteGraph.RIGHT
       }
       const realArc = ctx.arc
       ctx.arc = () => {}   // заводской кружок в середине связи не рисуем
