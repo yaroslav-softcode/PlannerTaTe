@@ -531,8 +531,10 @@ class RectNode extends LGraphNode {
     }
 
     // 5. Полоса статуса слева (её цвет — статус, а не акцент карточки).
+    // Без выбранного статуса полосы НЕТ (просьба Ярослава 07.10.26: серая плашка при пустом
+    // статусе не рисовалась — полоса только для «Готово»/«В работе»/«Ожидание»/«Проблема»).
     const st = t.stripe
-    if (st && st.w) {
+    if (this.status && st && st.w) {
       ctx.save()
       roundRect(ctx, 0, 0, w, h, r); ctx.clip()
       if (st.glow) { ctx.shadowColor = statusColor; ctx.shadowBlur = st.glow }
@@ -2235,6 +2237,9 @@ const IMG_CARD_W = 140
 async function createImageCard(cx, cy, f) {
   const node = createNode(cx, cy)
   if (!node) return
+  // Панель редактирования сразу НЕ открываем (просьба Ярослава 07.10.26): createNode выделяет
+  // узел, а панель открывается на выделении — снимаем выделение до отрисовки.
+  selectedNode.value = null
   node.title = ''
   // Затемнение фона у такой карточки ВЫКЛЮЧЕНО (просьба Ярослава 07.10.26): рисунок виден
   // как есть, без тёмной плёнки; в панели карточки это можно переключить как обычно.
