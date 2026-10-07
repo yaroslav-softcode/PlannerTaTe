@@ -159,7 +159,7 @@ export const L18N = {
     cableRefresh: 'Проверить снова',
     cableHint: 'Ключ можно ввести вручную или использовать кнопку автозаполнения (QR-код).',
     phoneManual: 'Если камерой не получится — откройте эту ссылку в браузере телефона:',
-    licBtn: 'Лицензия',
+    licBtn: 'Благодарить',
     licTitle: 'Оцените приложение',
     licRows: [
       'Плохо, но вижу потенциал',
@@ -168,7 +168,7 @@ export const L18N = {
       'Отлично, пользуюсь каждый день',
     ],
     licPay: 'Оплатить',
-    licThanks: 'Спасибо! Кнопка «Лицензия» больше не появится',
+    licThanks: 'Спасибо! Кнопка «Благодарить» больше не появится',
     licOpenFail: 'Не удалось открыть страницу оплаты',
     licLogo: 'Открыть страницу поддержки',
     /* Панели устройств на холсте («Смартфон»/«Планшет», 06.10.26, просьба Ярослава) */
@@ -269,7 +269,7 @@ export const L18N = {
     cableRefresh: 'Check again',
     cableHint: 'The key can be typed manually, or use the autofill button (QR code).',
     phoneManual: 'If the camera does not work, open this link in the phone browser:',
-    licBtn: 'Licence',
+    licBtn: 'Donate',
     licTitle: 'Rate the app',
     licRows: [
       'Bad, but I see the potential',
@@ -278,7 +278,7 @@ export const L18N = {
       'Great, I use it every day',
     ],
     licPay: 'Pay',
-    licThanks: "Thank you! The Licence button won't appear again",
+    licThanks: "Thank you! The Donate button won't appear again",
     licOpenFail: 'Could not open the payment page',
     licLogo: 'Open the support page',
     /* Device panels on the canvas (“Smartphone”/“Tablet”, 06.10.26) */

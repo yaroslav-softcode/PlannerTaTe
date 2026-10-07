@@ -270,8 +270,10 @@ function getImage(src) {
   return img
 }
 
-// Уменьшает картинку до maxSide по большей стороне и отдаёт JPEG data-URL
-// (иначе graph.json распухнет от оригиналов). Прозрачность заливаем фоном.
+// Уменьшает картинку до maxSide по большей стороне; отдаёт { url, w, h } — JPEG data-URL
+// (иначе graph.json распухнет от оригиналов) и размеры уменьшенной копии в тех же
+// пропорциях, что оригинал (нужны карточке-рисунку — см. createImageCard). Прозрачность
+// заливаем фоном.
 function shrinkImage(src, maxSide = 360, quality = 0.85) {
   return new Promise((resolve) => {
     const img = new Image()
@@ -285,7 +287,7 @@ function shrinkImage(src, maxSide = 360, quality = 0.85) {
         const cx = c.getContext('2d')
         cx.fillStyle = '#1e1e2e'; cx.fillRect(0, 0, w, h)
         cx.drawImage(img, 0, 0, w, h)
-        resolve(c.toDataURL('image/jpeg', quality))
+        resolve({ url: c.toDataURL('image/jpeg', quality), w, h })
       } catch (e) { console.error(e); resolve(null) }
     }
     img.onerror = () => resolve(null)
@@ -1051,6 +1053,13 @@ const NOTIFY_COLOR = '#9b7bd9'
 // В монохромной теме новая карточка-напоминания тоже серая (иначе в «Чёрно-Белой» фиолетовое пятно).
 function notifyColor() { return theme().mono ? '#8e949c' : NOTIFY_COLOR }
 LiteGraph.registerNodeType('rectnode', RectNode)
+// ПУСТОЙ заголовок карточки должен честно оставаться пустым и после перезагрузки. Библиотека
+// при загрузке графа подставляет в пустое поле имя класса: `configure` → `this.title =
+// this.constructor.title`, а registerNodeType выше записывает сюда `base_class.name`
+// (у минифицированной сборки это одна буква, например «q» — так пустая карточка-рисунок,
+// брошенная на холст 07.10.26, превращалась в карточку с заголовком «q»). Пустая строка
+// задаётся ПОСЛЕ регистрации: registerNodeType перезаписывает title только если оно пустое.
+RectNode.title = ''
 
 // --- State ---
 // Язык интерфейса помним между запусками, как тему и сайдбар (localStorage['plannertate_lang']).
@@ -1277,6 +1286,12 @@ async function initCanvas() {
   // рисунки: перетаскивание файла прямо на карточку (Ctrl+V обрабатывается на уровне документа)
   canvasEl.value.addEventListener('dragover', onDragOver)
   canvasEl.value.addEventListener('drop', onCanvasDrop)
+  // БАГ (нашёл Ярослав 07.10.26): библиотека litegraph сама создаёт ноды из брошенных файлов
+  // (.jpg/.jpeg/.png/.gif → «Image», .mp3/.wav/.ogg → «Source») — чужие ноды с чужим видом.
+  // Возвращаем true — «бросок обрабатываем сами»: библиотека больше ничего не создаёт; картинку
+  // на пустом месте превращает в свою карточку наш onCanvasDrop (createImageCard), остальные
+  // файлы, включая музыку, — просто игнорируются.
+  liteCanvas.onDropItem = () => true
   // клик по треугольнику на середине связи — удаление связи (+ подсветка при наведении)
   liteCanvas.onMouse = onMouse
   canvasEl.value.addEventListener('pointermove', onCanvasMouseMove)
@@ -2194,18 +2209,43 @@ function drawFileBadge(ctx, kind, cx, cy, s, color) {
 
 // --- Рисунки: приём картинки (кнопка в инспекторе / Ctrl+V / перетаскивание на карточку) ---
 async function attachImage(node, blob) {
-  if (!node || !blob) return
+  if (!node || !blob) return null
   const url = URL.createObjectURL(blob)
   try {
-    const dataUrl = await shrinkImage(url)
-    if (!dataUrl) { flash('Не удалось прочитать картинку'); return }
+    const shr = await shrinkImage(url)
+    if (!shr || !shr.url) { flash('Не удалось прочитать картинку'); return null }
     // Пишем ЧЕРЕЗ reactive(): узел может быть «сырым» объектом LiteGraph, и присваивание
     // в него напрямую Vue не замечает — карточка перерисуется, а инспектор нет
     // (не появятся превью и кнопка «Убрать»). reactive() вернёт тот же прокси, что уже
     // отслеживает панель, если она открыта на этом узле.
-    reactive(node).image = dataUrl
+    reactive(node).image = shr.url
     onNodeChange()
+    return { w: shr.w, h: shr.h }   // пропорции рисунка — для карточки-рисунка (createImageCard)
   } finally { URL.revokeObjectURL(url) }
+}
+
+// Картинка, брошенная на ПУСТОЕ место холста: обычная карточка с рисунком-фоном и ПУСТЫМ
+// заголовком (просьба Ярослава 07.10.26: «наименование задачи пустое»). Раньше на этом месте
+// библиотека создавала чужую ноду «Image» — бросок перехвачен (liteCanvas.onDropItem в
+// initCanvas), карточку делаем сами.
+// Размер — ПО ПРОПОРЦИЯМ рисунка (просьба Ярослава 07.10.26: «создавалась по пропорциям этого
+// рисунка»): так делала и прежняя нода библиотеки — высота = пропорция, ширина фиксированная
+// (140, как была у той ноды). Центр остаётся в точке броска; дальше карточка тянется как любая.
+const IMG_CARD_W = 140
+async function createImageCard(cx, cy, f) {
+  const node = createNode(cx, cy)
+  if (!node) return
+  node.title = ''
+  // Затемнение фона у такой карточки ВЫКЛЮЧЕНО (просьба Ярослава 07.10.26): рисунок виден
+  // как есть, без тёмной плёнки; в панели карточки это можно переключить как обычно.
+  node.dimMode = 'off'
+  const dims = await attachImage(node, f)
+  if (!dims) return                                  // картинка не прочиталась — размер не трогаем
+  const W = IMG_CARD_W
+  const H = Math.max(28, Math.round(W * (dims.h / Math.max(1, dims.w))))   // 28 — минимум карточки
+  node.pos = [cx - W / 2, cy - H / 2]
+  node.size = [W, H]
+  onNodeChange()                                     // перерисовать; размер попадёт в автосохранение
 }
 
 // --- Ссылка на файл: приложить (нативный диалог) и открыть -------------------
@@ -2526,7 +2566,13 @@ function onCanvasDrop(ev) {
   ev.preventDefault()
   const [gx, gy] = screenToGraph(ev.clientX, ev.clientY)
   const node = graph.getNodeOnPos(gx, gy)
-  if (!node) return
+  if (!node) {
+    // Пустое место холста: КАРТИНКА → своя карточка с рисунком-фоном и пустым заголовком
+    // (просьба Ярослава 07.10.26); остальные файлы, включая музыку, — просто ничего.
+    // Раньше здесь библиотека рисовала свои ноды «Image»/«Source» — бросок перехвачен.
+    if (f.type && f.type.indexOf('image/') === 0) createImageCard(gx, gy, f)
+    return
+  }
   // Панель устройства: ЛЮБОЙ файл, брошенный на плитку, уезжает на устройство (06.10.26).
   if ((node.kind || 'task') === 'device') { sendFilesToDevice(node, dt.files); return }
   if (f.type && f.type.indexOf('image/') === 0) { attachImage(node, f); return }

@@ -358,10 +358,13 @@ body { margin: 0; font-family: var(--ui-font); overflow: hidden; background: var
 .side-head { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
 /* Клик по названию открывает страницу поддержки автора (03.10.26). */
 .logo { cursor: pointer; }
-/* Кнопка «Лицензия» — большая оранжевая, справа от названия, до первого нажатия «Оплатить». */
+/* Кнопка «Благодарить» (была «Лицензия») — большая оранжевая, справа от названия, до первого нажатия «Оплатить». */
 .lic-btn { padding: 6px 9px; border: 0; border-radius: 9px; cursor: pointer; font-family: inherit;
   font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap;
-  background: linear-gradient(180deg, #ffa53c, #f08019); box-shadow: 0 2px 8px rgba(240, 128, 25, .35); }
+  background: linear-gradient(180deg, #ffa53c, #f08019); box-shadow: 0 2px 8px rgba(240, 128, 25, .35);
+  /* «Благодарить» длиннее прежней «Лицензии», и кнопка упиралась в правый край сайдбара
+     (обрезается справа, замечание Ярослава 07.10.26) — сдвигаем на 3 px влево. */
+  position: relative; left: -3px; }
 .lic-btn:hover { background: linear-gradient(180deg, #ffb455, #f58a24); }
 .lic-btn:active { transform: translateY(1px); }
 /* Низ панели: кнопка «Свернуть» + подсказка. margin-top: auto прижимает блок к низу колонки;
