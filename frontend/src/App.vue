@@ -270,10 +270,11 @@ function getImage(src) {
   return img
 }
 
-// Уменьшает картинку до maxSide по большей стороне; отдаёт { url, w, h } — JPEG data-URL
-// (иначе graph.json распухнет от оригиналов) и размеры уменьшенной копии в тех же
-// пропорциях, что оригинал (нужны карточке-рисунку — см. createImageCard). Прозрачность
-// заливаем фоном.
+// Уменьшает картинку до maxSide по большей стороне; отдаёт { blob, w, h } — JPEG-копию
+// (её сохраняем в папку blobs отдельным файлом, а в графе держим только ссылку: иначе
+// graph.json распухнет от оригиналов и каждое автосохранение будет гонять мегабайты)
+// и размеры уменьшенной копии в тех же пропорциях, что оригинал (нужны карточке-рисунку —
+// см. createImageCard). Прозрачность заливаем фоном.
 function shrinkImage(src, maxSide = 360, quality = 0.85) {
   return new Promise((resolve) => {
     const img = new Image()
@@ -287,12 +288,25 @@ function shrinkImage(src, maxSide = 360, quality = 0.85) {
         const cx = c.getContext('2d')
         cx.fillStyle = '#1e1e2e'; cx.fillRect(0, 0, w, h)
         cx.drawImage(img, 0, 0, w, h)
-        resolve({ url: c.toDataURL('image/jpeg', quality), w, h })
+        c.toBlob((b) => resolve(b ? { blob: b, w, h } : null), 'image/jpeg', quality)
       } catch (e) { console.error(e); resolve(null) }
     }
     img.onerror = () => resolve(null)
     img.src = src
   })
+}
+
+// Кладёт уменьшенную картинку на сервер (папка blobs рядом с graph.json) и возвращает
+// ссылку вида /images/<хэш>.jpg. Старые карточки с data-URL работают как прежде —
+// пересылать их не нужно.
+async function saveImageBlob(blob) {
+  try {
+    const fd = new FormData()
+    fd.append('file', blob, 'image.jpg')
+    const r = await fetch('/api/image/save', { method: 'POST', body: fd })
+    const j = await r.json()
+    return (j && j.status === 'ok') ? j.url : null
+  } catch (e) { console.error(e); return null }
 }
 
 class RectNode extends LGraphNode {
@@ -2215,12 +2229,14 @@ async function attachImage(node, blob) {
   const url = URL.createObjectURL(blob)
   try {
     const shr = await shrinkImage(url)
-    if (!shr || !shr.url) { flash('Не удалось прочитать картинку'); return null }
+    if (!shr || !shr.blob) { flash('Не удалось прочитать картинку'); return null }
+    const ref = await saveImageBlob(shr.blob)
+    if (!ref) { flash('Не удалось сохранить картинку в папку приложения'); return null }
     // Пишем ЧЕРЕЗ reactive(): узел может быть «сырым» объектом LiteGraph, и присваивание
     // в него напрямую Vue не замечает — карточка перерисуется, а инспектор нет
     // (не появятся превью и кнопка «Убрать»). reactive() вернёт тот же прокси, что уже
     // отслеживает панель, если она открыта на этом узле.
-    reactive(node).image = shr.url
+    reactive(node).image = ref
     onNodeChange()
     return { w: shr.w, h: shr.h }   // пропорции рисунка — для карточки-рисунка (createImageCard)
   } finally { URL.revokeObjectURL(url) }
@@ -2788,7 +2804,16 @@ async function saveGraph(silent = false) {
   try {
     const data = graph.serialize()
     if (Array.isArray(data.nodes)) data.nodes.forEach(normalizeNode)
-    await fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    // Явное сохранение (Ctrl+S, silent=false) — force: пользователь сознательно пишет
+    // любой граф, даже если карточек стало резко меньше. Автосохранение — без force.
+    const url = '/api/save' + (silent ? '' : '?force=1')
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    // Сервер может ОТКЛОНИТЬ сохранение (409): карточек стало подозрительно меньше —
+    // молча принять это нельзя, иначе правка «исчезнет» без объяснения.
+    if (res.status === 409) {
+      const j = await res.json().catch(() => ({}))
+      flash(t('saveRejected') + (j.error ? ': ' + j.error : ''))
+    }
     // Успех не сообщаем: автосохранение работает само, а всплывающее «Сохранено» мешало.
     // Об ошибке всё равно говорим — молча терять правки нельзя.
   } catch (e) { console.error(e); flash(t('saveFailed')) }

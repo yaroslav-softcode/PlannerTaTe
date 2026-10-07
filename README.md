@@ -26,7 +26,7 @@ Access from the network is protected by an access key: from the computer itself 
 ## Installation
 
 ### On the computer
-1. Download **`PlannerTaTe_Setup_1.3.exe`** from the [Releases page](https://github.com/yaroslav-softcode/PlannerTaTe/releases) and run it. Administrator rights are not required.
+1. Download **`PlannerTaTe_Setup_1.4.exe`** from the [Releases page](https://github.com/yaroslav-softcode/PlannerTaTe/releases) and run it. Administrator rights are not required.
 2. When Windows asks about network access, allow it **for private networks** — otherwise the phone will not be able to connect.
 3. The planner opens in the browser and stays in the tray (a small icon next to the clock): from there you can open the planner, look up the address and the key for the phone, or exit.
 
@@ -72,7 +72,7 @@ python plannertate.py      # the same, but with the tray icon
 
 # 3) the Windows installer (optional)
 pyinstaller --clean --noconfirm PlannerTaTe.spec
-ISCC.exe PlannerTaTe.iss   # -> dist\PlannerTaTe_Setup_1.3.exe
+ISCC.exe PlannerTaTe.iss   # -> dist\PlannerTaTe_Setup_1.4.exe
 ```
 
 Environment variables for tests and special cases: `PLANNERTATE_PORT`, `PLANNERTATE_HOST`, `PLANNERTATE_DATA` (a different data folder), `PLANNERTATE_NO_BROWSER`, `PLANNERTATE_NO_SHORTCUT`.
@@ -115,7 +115,7 @@ MIT — see [LICENSE](LICENSE). © Yaroslav Khmelev.
 ## Установка
 
 ### На компьютер
-1. Скачайте **`PlannerTaTe_Setup_1.3.exe`** со [страницы выпусков](https://github.com/yaroslav-softcode/PlannerTaTe/releases) и запустите. Права администратора не нужны.
+1. Скачайте **`PlannerTaTe_Setup_1.4.exe`** со [страницы выпусков](https://github.com/yaroslav-softcode/PlannerTaTe/releases) и запустите. Права администратора не нужны.
 2. Когда Windows спросит про доступ к сети — выберите **«Разрешить» для частных сетей**, иначе телефон не подключится.
 3. Планировщик откроется в браузере и останется в трее (маленький значок рядом с часами): через него можно открыть планировщик, посмотреть адрес и ключ для телефона, выйти.
 
@@ -161,7 +161,7 @@ python plannertate.py      # то же самое, но со значком в �
 
 # 3) установщик для Windows (не обязательно)
 pyinstaller --clean --noconfirm PlannerTaTe.spec
-ISCC.exe PlannerTaTe.iss   # -> dist\PlannerTaTe_Setup_1.3.exe
+ISCC.exe PlannerTaTe.iss   # -> dist\PlannerTaTe_Setup_1.4.exe
 ```
 
 Переменные окружения для проверок и особых случаев: `PLANNERTATE_PORT`, `PLANNERTATE_HOST`, `PLANNERTATE_DATA` (другая папка данных), `PLANNERTATE_NO_BROWSER`, `PLANNERTATE_NO_SHORTCUT`.

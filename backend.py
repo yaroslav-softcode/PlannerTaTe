@@ -13,6 +13,9 @@ import json
 import sys
 import hmac
 import time
+import ctypes
+if sys.platform == "win32":
+    import ctypes.wintypes
 import secrets
 import socket
 import subprocess
@@ -502,6 +505,88 @@ def _save_state(state):
         print("[напоминания] не смог сохранить состояние:", e)
 
 
+# --- Запись графа: атомарно, со страховкой и с защитой от «схлопывания» (07.10.26) ----------
+# Раньше автосохранение приложения писало graph.json напрямую: сбой в момент записи портил
+# файл, а случайный пустой граф (баг страницы, пустая вкладка) за 600 мс затирал весь план.
+# Теперь любая запись графа идёт через _write_graph: временный файл + os.replace (файл либо
+# старый, либо новый — полуслоя не бывает), перед записью держим свежие копии, и мы не
+# сохраняем граф, в котором карточек внезапно стало сильно меньше, чем на диске.
+GRAPH_BACKUP_KEEP = 24          # сколько автоматических копий хранить (ручные — свои 20)
+GRAPH_SHRINK_MIN = 8            # на графе меньше столько карточек — защиту не включаем
+GRAPH_SHRINK_RATIO = 0.5        # автосохранение отклоняем, если карточек стало меньше половины
+_last_graph_backup = [0.0]      # когда в последний раз сделали автоматическую копию
+
+
+def _graph_node_count(data):
+    n = (data or {}).get("nodes")
+    return len(n) if isinstance(n, list) else 0
+
+
+def _graph_backups():
+    return sorted(f for f in os.listdir(BASE_DIR)
+                  if f.startswith("graph.json.bak_") and "_auto" in f)
+
+
+def _backup_graph(tag="auto"):
+    """Копия текущего graph.json рядом с ним. Молча: бэкап не должен ломать сохранение."""
+    try:
+        if not os.path.exists(GRAPH_FILE):
+            return ""
+        import shutil
+        name = "graph.json.bak_%s_%s" % (time.strftime("%Y-%m-%d_%H%M%S"), tag)
+        dst = os.path.join(BASE_DIR, name)
+        if os.path.exists(dst):                      # одна секунда — одна копия
+            return name
+        shutil.copy2(GRAPH_FILE, dst)
+        for old in _graph_backups()[:-GRAPH_BACKUP_KEEP]:
+            try:
+                os.remove(os.path.join(BASE_DIR, old))
+            except OSError:
+                pass
+        return name
+    except Exception as e:
+        print("[граф] не смог сделать резервную копию:", e)
+        return ""
+
+
+def _write_graph(data, force=False, tag="auto"):
+    """Единственная точка записи графа. Возвращает (ok, ошибка).
+
+    force=True — явное действие пользователя (сохранить/восстановить): пишем что бы там ни
+    было, но копию прежнего графа всё равно держим.
+    """
+    try:
+        new_n = _graph_node_count(data)
+        if not force and os.path.exists(GRAPH_FILE):
+            try:
+                with open(GRAPH_FILE, encoding="utf-8") as f:
+                    old_n = _graph_node_count(json.load(f))
+            except Exception:
+                old_n = 0                            # файл повреждён — пустой граф не защищаем
+            if old_n >= GRAPH_SHRINK_MIN and new_n < int(old_n * GRAPH_SHRINK_RATIO):
+                _backup_graph("before_shrink")       # повреждённый вариант тоже сохраняем
+                print("[граф] сохранение отклонено: карточек %d вместо %d" % (new_n, old_n))
+                return False, ("карточек стало %d вместо %d — сохранение отклонено, "
+                               "прежний граф отложен в резервную копию" % (new_n, old_n))
+        # Страховка: не чаще одной копии в минуту (ручное сохранение — всегда).
+        # Таймер двигаем ТОЛЬКО когда копия реально сделана: первое сохранение (графа ещё
+        # не было) копии не делает — и следующее должно скопировать уже настоящий граф.
+        global _last_graph_backup
+        if force or time.time() - _last_graph_backup[0] >= 60:
+            if _backup_graph(tag):
+                _last_graph_backup[0] = time.time()
+        tmp = GRAPH_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, GRAPH_FILE)                  # подмена одним движением
+        return True, ""
+    except Exception as e:
+        print("[граф] ошибка записи:", e)
+        return False, str(e)
+
+
 def load_graph_nodes():
     try:
         with open(GRAPH_FILE, encoding="utf-8") as f:
@@ -568,8 +653,7 @@ def api_load():
             data = json.load(f)
         data, changed = _merge_phone_tasks(data)      # карточки, созданные на телефоне
         if changed:
-            with open(GRAPH_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            _write_graph(data, tag="phone_merge")
         return jsonify(data)
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
@@ -585,10 +669,98 @@ def api_save():
         return jsonify({"status": "error", "error": "expected object"}), 400
     # Карточки, созданные на телефоне, не должны теряться, если приложение в браузере
     # сохраняет граф, не зная о них (оно держит граф в памяти).
+    # force=1 — явное сохранение (Ctrl+S): пишем любой граф, даже «схлопнутый» (защита ниже).
+    force = request.args.get("force") == "1"
     data, added = _merge_phone_tasks(data)
-    with open(GRAPH_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    ok, err = _write_graph(data, force=force)
+    if not ok:
+        return jsonify({"status": "error", "error": err}), 409
+    _gc_image_blobs(data)
     return jsonify({"status": "ok"})
+
+
+# --- Картинки карточек: отдельные файлы, не data-URL в графе (07.10.26) ---------------------
+# Раньше уменьшенный JPEG ехал внутри graph.json как data-URL: граф распухал, и каждое
+# автосохранение пересылало все картинки заново. Теперь картинка кладётся один раз в папку
+# blobs/ рядом с graph.json, а в карточке живёт короткая ссылка /images/<хэш>.jpg.
+# Старые карточки с data-URL продолжают работать как есть.
+IMAGES_DIR = os.path.join(BASE_DIR, "blobs")
+_IMAGE_NAME_RE = r"^[0-9a-f]{8,64}\.(jpg|png|gif|webp)$"
+
+
+def _image_refs(data):
+    """Имена файлов blobs/, на которые ссылается граф (только наши /images/<имя>)."""
+    import re as _re
+    refs = set()
+    for n in (data or {}).get("nodes") or []:
+        img = str(n.get("image") or "")
+        if img.startswith("/images/"):
+            name = os.path.basename(img)
+            if _re.match(_IMAGE_NAME_RE, name):
+                refs.add(name)
+    return refs
+
+
+def _gc_image_blobs(data):
+    """Удаляет файлы blobs/, на которые никто не ссылается (моложе суток не трогаем —
+    карточка могла быть создана секунду назад и ещё не доехать до сервера)."""
+    try:
+        if not os.path.isdir(IMAGES_DIR):
+            return
+        refs = _image_refs(data)
+        cutoff = time.time() - 24 * 3600
+        for fn in os.listdir(IMAGES_DIR):
+            if fn in refs:
+                continue
+            try:
+                if os.path.getmtime(os.path.join(IMAGES_DIR, fn)) < cutoff:
+                    os.remove(os.path.join(IMAGES_DIR, fn))
+            except OSError:
+                pass
+    except Exception as e:
+        print("[картинки] чистка не удалась:", e)
+
+
+@app.route("/api/image/save", methods=["POST"])
+def api_image_save():
+    """Принять одну картинку карточки: сохранить в blobs/ и вернуть ссылку для графа."""
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"status": "error", "error": "нет файла"}), 400
+    data = f.read()
+    if not data or len(data) > 4 * 1024 * 1024:
+        return jsonify({"status": "error", "error": "файл пустой или слишком большой"}), 400
+    # Разрешаем только картинки, которые умеет рисовать сам браузер.
+    head = data[:12]
+    if not (head.startswith(b"\xff\xd8") or head.startswith(b"\x89PNG")
+            or head[:4] in (b"GIF8",) or data[4:12] == b"WEBPVP"):
+        return jsonify({"status": "error", "error": "это не картинка"}), 400
+    ext = "jpg" if head.startswith(b"\xff\xd8") else (
+          "png" if head.startswith(b"\x89PNG") else (
+          "gif" if head[:4] == b"GIF8" else "webp"))
+    name = hashlib.sha256(data).hexdigest()[:32] + "." + ext   # одинаковая картинка — один файл
+    try:
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        path = os.path.join(IMAGES_DIR, name)
+        if not os.path.exists(path):
+            tmp = path + ".tmp"
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp, path)
+        return jsonify({"status": "ok", "url": "/images/" + name})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/images/<name>")
+def image_file(name):
+    """Отдать картинку карточки из blobs/ (имя — хэш, путь к чужим файлам закрыт)."""
+    import re as _re
+    if not _re.match(_IMAGE_NAME_RE, name):
+        return jsonify({"status": "error", "error": "неверное имя"}), 400
+    if not os.path.isdir(IMAGES_DIR):
+        return jsonify({"status": "error", "error": "нет картинок"}), 404
+    return send_from_directory(IMAGES_DIR, name, max_age=86400)
 
 
 @app.route("/api/notify", methods=["POST"])
@@ -1265,8 +1437,7 @@ def _add_phone_task(data):
     graph["links"] = links
     _plain_ids = [int(n.get("id") or 0) for n in nodes if int(n.get("id") or 0) < PHONE_ID_BASE]
     graph["last_node_id"] = max([int(graph.get("last_node_id") or 0)] + _plain_ids)
-    with open(GRAPH_FILE, "w", encoding="utf-8") as f:
-        json.dump(graph, f, ensure_ascii=False, indent=2)
+    _write_graph(graph, tag="phone_add")
     pending = _phone_tasks_load()
     # Держим карточки (и их связи) до тех пор, пока браузер не пришлёт граф, где они уже есть.
     pending[str(nid)] = {"node": node, "links": [l for l in new_links if l[3] == nid]}
@@ -1367,7 +1538,48 @@ def api_pick_file():
     path = (r.stdout or "").strip()
     if not path:
         return jsonify({"status": "cancel"})          # пользователь закрыл диалог
+    _remember_folder(path)   # раз человек сам показал файл из папки — ищем в ней и дальше
     return jsonify({"status": "ok", "path": os.path.normpath(path)})
+
+
+# --- Папки, которые показал пользователь (07.10.26) -------------------------------------------
+# Быстрый поиск брошенного файла смотрит личные папки и корни дисков на один уровень — в
+# музыкальную библиотеку вида H:\MUSIC\ABBA\1975 - ABBA\01.flac он не ныряет. Но если человек
+# ХОТЬ РАЗ выбрал файл из такой папки сам (диалог выбора), он тем самым доверил её приложению:
+# запоминаем её и с этого момента ищем в ней ГЛУБОКО. Список — рядом с graph.json.
+FILE_FOLDERS_FILE = os.path.join(BASE_DIR, "file_folders.json")
+FILE_FOLDERS_MAX = 50
+FILE_FOLDER_DEPTH = 6          # музыка обычно лежит на 3–5 уровнях, берём с запасом
+
+
+def _file_folders():
+    try:
+        with open(FILE_FOLDERS_FILE, encoding="utf-8") as f:
+            lst = json.load(f)
+        return lst if isinstance(lst, list) else []
+    except Exception:
+        return []
+
+
+def _remember_folder(path):
+    """Запомнить папку выбранного файла (без дублей, корень диска — не в счёт: он и так
+    сканируется, но нырять в целый диск глубоко нельзя — съест весь лимит времени)."""
+    try:
+        d = os.path.normcase(os.path.normpath(os.path.dirname(path)))
+        if not d or (len(d) == 3 and d.endswith(":\\")):
+            return
+        lst = _file_folders()
+        if any(os.path.normcase(str(x)) == d for x in lst):
+            return
+        lst.append(d)
+        if len(lst) > FILE_FOLDERS_MAX:
+            lst = lst[-FILE_FOLDERS_MAX:]
+        tmp = FILE_FOLDERS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(lst, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, FILE_FOLDERS_FILE)
+    except Exception as e:
+        print("[файлы] не смог запомнить папку:", e)
 
 
 # --- Опознание брошенного файла по приметам (06.10.26) -----------------------------------------
@@ -1411,7 +1623,7 @@ def _locate_file(name, size, mtime):
         return None
 
     def scan(folder, depth):
-        """Глубина 0 — только папка; 1 — и её подпапки первым уровнем."""
+        """Глубина 0 — только папка; 1 — и её подпапки первым уровнем; больше — рекурсивно."""
         hit = scan_one(folder)
         if hit or depth <= 0:
             return hit
@@ -1425,10 +1637,19 @@ def _locate_file(name, size, mtime):
                 continue
             if time.time() > deadline:
                 return None
-            hit = scan_one(os.path.join(folder, e))
+            hit = scan(os.path.join(folder, e), depth - 1)
             if hit:
                 return hit
         return None
+
+    # 0. Папки, которые человек сам показывал через диалог выбора: раз он однажды выбрал
+    # файл из такой папки, ищем в ней глубоко (музыкальные библиотеки на 3–5 уровнях).
+    for d in _file_folders():
+        if time.time() > deadline:
+            break
+        hit = scan(d, FILE_FOLDER_DEPTH)
+        if hit:
+            return hit
 
     # 1. Личные папки: файлы чаще всего лежат тут (с одним уровнем вложенности).
     fast = [
@@ -1483,7 +1704,80 @@ def api_locate_file():
     hit = _locate_file(name, size, mtime)
     if not hit:
         return jsonify({"status": "none"})
+    _remember_folder(hit)    # файл нашёлся в какой-то папке — раз человек с ней работает,
+                             # ищем в ней и дальше глубоко (бросок файлов с 07.10.26)
     return jsonify({"status": "ok", "path": os.path.normpath(hit)})
+
+
+def _top_windows():
+    """Хэндлы настоящих видимых окон (с заголовком и размером) — {hwnd: pid}."""
+    user32 = ctypes.windll.user32
+    out = {}
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def enum_proc(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        if user32.GetWindow(hwnd, 4):                       # GW_OWNER — дочернее диалоговое
+            return True
+        if user32.GetWindowLongW(hwnd, -20) & 0x00020000:   # WS_EX_TOOLWINDOW — служебное
+            return True
+        if not user32.GetWindowTextLengthW(hwnd):
+            return True
+        r = ctypes.wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(r))
+        if r.right - r.left < 100 or r.bottom - r.top < 100:
+            return True
+        wpid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+        out[hwnd] = wpid.value
+        return True
+
+    user32.EnumWindows(enum_proc, 0)
+    return out
+
+
+def _bring_window_to_front(hwnd):
+    """Поднять чужое окно наверх. Из фонового процесса (наш сервер) Windows просто так не
+    разрешает SetForegroundWindow — нужны три законных способа вместе (07.10.26, после того
+    как первый вариант с неверной константой 0x0009 ничего не менял):
+      1) ForegroundLockTimeout — НАСТОЯЩИЕ константы 0x2000/0x2001 (0x0009 — давно мёртвая
+         опция, на неё я и напоролся);
+      2) «нажатие Alt» (keybd_event VK_MENU) — ещё один способ снять запрет;
+      3) AttachThreadInput — присоединяемся к потоку активного окна, и фокус можно забрать.
+    Плюс topmost-вспышка: она поднимает окно по z-порядку даже если фокус не отдали."""
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        SPI_GETLOCK, SPI_SETLOCK = 0x2000, 0x2001
+        old = ctypes.c_uint32(0xFFFFFFFF)
+        got = bool(user32.SystemParametersInfoW(SPI_GETLOCK, 0, ctypes.byref(old), 0))
+        if got:
+            user32.SystemParametersInfoW(SPI_SETLOCK, 0, ctypes.c_void_p(0), 0)
+        user32.keybd_event(0x12, 0, 0, 0)                   # VK_MENU down
+        user32.keybd_event(0x12, 0, 2, 0)                   # VK_MENU up
+        fg = user32.GetForegroundWindow()
+        fg_tid = user32.GetWindowThreadProcessId(fg, None) or 0
+        my_tid = kernel32.GetCurrentThreadId()
+        attached = bool(fg_tid and fg_tid != my_tid and
+                        user32.AttachThreadInput(my_tid, fg_tid, True))
+        try:
+            user32.ShowWindow(hwnd, 9)                      # SW_RESTORE (свёрнутое тоже поднимем)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.SetActiveWindow(hwnd)
+        finally:
+            if attached:
+                user32.AttachThreadInput(my_tid, fg_tid, False)
+        SWP = 0x0002 | 0x0001                               # NOMOVE|NOSIZE
+        user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, SWP)      # HWND_TOPMOST
+        user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, SWP)      # HWND_NOTOPMOST (вверху, но не приклеено)
+        if got and old.value != 0xFFFFFFFF:
+            user32.SystemParametersInfoW(SPI_SETLOCK, 0, ctypes.c_void_p(old.value), 0)
+        return True
+    except Exception as e:
+        print("[окно] поднять не удалось:", e)
+        return False
 
 
 @app.route("/api/open_file", methods=["POST"])
@@ -1498,6 +1792,7 @@ def api_open_file():
         return jsonify({"status": "error", "error": "нужен полный путь к файлу"}), 400
     if not os.path.isfile(path):
         return jsonify({"status": "error", "error": "файл не найден"}), 404
+    before = set(_top_windows()) if sys.platform == "win32" else set()
     try:
         if hasattr(os, "startfile"):
             os.startfile(path)                        # Windows: ассоциация системы (Блокнот, плеер и т.п.)
@@ -1505,6 +1800,43 @@ def api_open_file():
             subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", path])
     except Exception as e:
         return jsonify({"status": "error", "error": "не удалось открыть: %s" % e}), 500
+    # Окно запущенной программы должно оказаться поверх всех (07.10.26): AIMP выпрыгивает сам,
+    # а MPC-HC при запуске из фонового сервера открывался под окном PlannerTaTe. Ищем НОВОЕ
+    # окно (появилось после startfile); если плеер был запущен и окно просто обновилось —
+    # берём окно, в заголовке которого имя файла.
+    if sys.platform == "win32":
+        def lift():
+            stem = os.path.splitext(os.path.basename(path))[0].lower()
+            found = None
+            # холодный плеер/Word показывает окно 5–10 с: ждём до ~15 с
+            for _ in range(75):
+                time.sleep(0.2)
+                now = _top_windows()
+                fresh = [h for h in now if h not in before]
+                if fresh:
+                    found = fresh[0]
+                    break
+                user32 = ctypes.windll.user32
+                for h in now:
+                    n = user32.GetWindowTextLengthW(h)
+                    if n:
+                        buf = ctypes.create_unicode_buffer(n + 1)
+                        user32.GetWindowTextW(h, buf, n + 1)
+                        if stem and stem in buf.value.lower():
+                            found = h
+                            break
+                if found:
+                    break
+            if not found:
+                return
+            # поднимаем и проверяем; некоторые плееры сами сбрасывают себя вниз — повторим
+            user32 = ctypes.windll.user32
+            for attempt in range(3):
+                _bring_window_to_front(found)
+                time.sleep(0.6)
+                if user32.GetForegroundWindow() == found:
+                    return
+        threading.Thread(target=lift, daemon=True).start()
     return jsonify({"status": "ok"})
 
 
@@ -1642,8 +1974,7 @@ def _add_inbox_card(name, path, dev):
     graph["links"] = links + new_links
     _plain_ids = [int(n.get("id") or 0) for n in nodes if int(n.get("id") or 0) < PHONE_ID_BASE]
     graph["last_node_id"] = max([int(graph.get("last_node_id") or 0)] + _plain_ids)
-    with open(GRAPH_FILE, "w", encoding="utf-8") as f:
-        json.dump(graph, f, ensure_ascii=False, indent=2)
+    _write_graph(graph, tag="device_file")
     pending = _phone_tasks_load()
     pending[str(nid)] = {"node": node, "links": new_links}
     _phone_tasks_save(pending)
