@@ -68,7 +68,7 @@ export const L18N = {
   ru: {
     title: 'PlannerTaTe', status: 'Статус',
     newRoot: '+ Корневой узел', addTask: '+ Задача', addNotify: '+ Напоминание', save: 'Сохранить (Ctrl+S)', open: 'Открыть',
-    notify: 'Список напоминаний', notifyTitle: 'Напоминание', collapse: 'Свернуть', expand: 'Развернуть', settings: 'Настройки', label: 'Название', color: 'Цвет', tags: 'Теги',
+    notify: 'Список напоминаний', notifyTitle: 'Напоминание', taskTitle: 'Задача', collapse: 'Свернуть', expand: 'Развернуть', settings: 'Настройки', label: 'Название', color: 'Цвет', tags: 'Теги',
     delete: 'Удалить узел', connectFrom: 'Связать отсюда',
     readerBack: 'Назад',
     // Подсказка по карточкам — МАССИВОМ: в панели каждая комбинация выводится своей строкой
@@ -181,7 +181,7 @@ export const L18N = {
   en: {
     title: 'PlannerTaTe', status: 'Status',
     newRoot: '+ Root node', addTask: '+ Task', addNotify: '+ Reminder', save: 'Save (Ctrl+S)', open: 'Open',
-    notify: 'Reminder list', notifyTitle: 'Reminder', collapse: 'Collapse', expand: 'Expand', settings: 'Settings', label: 'Label', color: 'Color', tags: 'Tags',
+    notify: 'Reminder list', notifyTitle: 'Reminder', taskTitle: 'Task', collapse: 'Collapse', expand: 'Expand', settings: 'Settings', label: 'Label', color: 'Color', tags: 'Tags',
     delete: 'Delete node', connectFrom: 'Connect from here',
     readerBack: 'Back',
     selectHint: [

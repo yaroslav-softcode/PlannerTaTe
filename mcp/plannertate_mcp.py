@@ -220,7 +220,12 @@ def _free_spot(g: dict, near: str = "") -> list:
 
 def _new_node(g: dict, title: str, pos, *, kind="task", status="", color="", description="",
               due="", tags=None, remind_time="", repeat="once", channels=None) -> dict:
-    g["last_node_id"] = int(g.get("last_node_id", 0)) + 1
+    # Счётчик берём не только из last_node_id, но и из максимального id узлов: карточки,
+    # созданные телефоном/планшетом (диапазоны 1 000 000+ / 2 000 000+), счётчик компьютера
+    # НЕ поднимают (так задумано в backend.py), и без этой проверки новый id совпадал
+    # с телефонным — две карточки с одним номером (проверено 08.10.26: Hh.ru #1000055).
+    g["last_node_id"] = max([int(g.get("last_node_id", 0))]
+                            + [int(n.get("id") or 0) for n in g["nodes"]]) + 1
     order = max([int(n.get("order", 0)) for n in g["nodes"]] or [0]) + 1
     return {
         "id": g["last_node_id"], "type": "rectnode", "pos": list(pos), "size": [100, 56],

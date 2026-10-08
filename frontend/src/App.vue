@@ -312,7 +312,9 @@ async function saveImageBlob(blob) {
 class RectNode extends LGraphNode {
   constructor() {
     super()
-    this.title = 'Задача'
+    // Название новой карточки — по языку интерфейса (Ярослав 08.10.26: при английском
+    // английском и писать; раньше здесь стоял русский «Задача» мимо i18n).
+    this.title = t('taskTitle')
     // Вид карточки: 'task' — задача, 'notify' — напоминание (значок ⏰ и свой цвет).
     // Ярослав 01.10.26: «В левом меню там, где у нас плюс задача ниже сделай кнопку + уведомление» (так он называл её до переименования в напоминание).
     this.kind = 'task'
@@ -2756,23 +2758,48 @@ function deleteReminder(id) {
 // карточки создавались по центру». Если там уже стоит карточка, шагаем каскадом (вправо-вниз
 // на четверть карточки), иначе несколько новых легли бы идеально друг на друга.
 // kind: 'task' — задача («+ Задача»), 'notify' — напоминание («+ Напоминание», значок ⏰).
+// Ярослав 08.10.26 (уточнение после первой проверки): центр — СЕРЕДИНА СУЩЕСТВУЮЩИХ КАРТОЧЕК,
+// ровно как ставит вид F5 (applyFieldView считает bounding box всех узлов и его середину).
+// Середина поля FIELD не годилась: на большом листе она далеко от задач, и новая карточка
+// уезжала «очень далеко внизу». Каскад вправо-вниз оставлен: несколько новых подряд не должны
+// ложиться идеально друг на друга.
+function contentCenter() {
+  // Середина содержимого графа — та же формула, что у applyFieldView (вид после F5).
+  const nodes = (graph && graph._nodes) || []
+  if (!nodes.length) return [FIELD.x + FIELD.w / 2, FIELD.y + FIELD.h / 2]
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+  for (const n of nodes) {
+    const [x, y] = n.pos, [nw, nh] = n.size
+    x0 = Math.min(x0, x); y0 = Math.min(y0, y)
+    x1 = Math.max(x1, x + nw); y1 = Math.max(y1, y + nh)
+  }
+  return [(x0 + x1) / 2, (y0 + y1) / 2]
+}
 function addCardAtCenter(kind = 'task') {
   if (!liteCanvas || !canvasEl.value) return
-  const rect = canvasEl.value.getBoundingClientRect()
-  const [gx, gy] = screenToGraph(rect.left + rect.width / 2, rect.top + rect.height / 2)
   const [w, h] = RectNode.size
-  const clampX = (v) => Math.min(Math.max(v, FIELD.x + w / 2), FIELD.x + FIELD.w - w / 2)
-  const clampY = (v) => Math.min(Math.max(v, FIELD.y + h / 2), FIELD.y + FIELD.h - h / 2)
+  const [gx, gy] = contentCenter()
   const busy = (cx, cy) => (graph._nodes || []).some(o =>
     Math.abs(o.pos[0] + o.size[0] / 2 - cx) < 24 && Math.abs(o.pos[1] + o.size[1] / 2 - cy) < 18)
   let step = 0
-  while (step < 24 && busy(clampX(gx + step * w * 0.26), clampY(gy + step * h * 0.36))) step++
-  const node = createNode(clampX(gx + step * w * 0.26), clampY(gy + step * h * 0.36))
+  while (step < 24 && busy(gx + step * w * 0.26, gy + step * h * 0.36)) step++
+  const node = createNode(gx + step * w * 0.26, gy + step * h * 0.36)
   if (node) {
-    if (kind === 'notify') {           // напоминание: свой цвет и название по умолчанию
+    if (kind === 'notify') {
+      // ОТДЕЛЬНОЕ напоминание (Ярослав 08.10.26): создаётся без задачи-родителя, поэтому
+      // заполняем только его собственные поля — срок сегодня, ближайший круглый час,
+      // однократно, все три канала. Задача и описание остаются пустыми: их впишет
+      // пользователь в панели, которая откроется сразу (createNode выделяет карточку).
       node.kind = 'notify'
       node.color = notifyColor()
-      node.title = t('notifyTitle')
+      // Задачу вписывает пользователь: поле оставляем пустым (в панели и на карточке
+      // стоит подсказка «Задача»/«Task»), название по умолчанию здесь только для
+      // привязанного напоминания — см. fillReminderDefaults.
+      node.title = ''
+      node.due = todayISO()
+      node.remindTime = defaultRemindTime()
+      node.repeatMode = 'once'
+      node.channels = ['pc', 'phone', 'tablet']
     }
     // Новая карточка: при первой правке подберём размер под название (см. fitCardToTitle).
     node._fitOnce = true
@@ -3100,13 +3127,15 @@ function inspAddNotify() {
   if (!child) return
   closeInspectorPanel()
 }
-// Кнопка сайдбара «+ Напоминание»: задачу берём у ВЫДЕЛЕННОЙ карточки; если ничего не выделено —
-// неблокирующая подсказка (вариант выбран Ярославом 01.10.26).
+// Кнопка сайдбара «+ Напоминание» (Ярослав 08.10.26): есть выделенная карточка — напоминание
+// К НЕЙ (задача и описание копируются, связь родитель → напоминание, как раньше);
+// выделено пустое место — отдельное напоминание в центре холста, без задачи-родителя:
+// пользователь сам впишет задачу и описание в открывшейся панели.
 function onAddNotify() {
   if (readOnly.value) { roBlocked(); return }
   const sel = (liteCanvas && liteCanvas.selected_nodes && Object.values(liteCanvas.selected_nodes)[0])
     || (selectedNode.value && toRaw(selectedNode.value))
-  if (!sel) { flash(t('remNoCard')); return }
+  if (!sel) { addCardAtCenter('notify'); return }
   const child = addNotifyFrom(sel)
   if (child) closeInspectorPanel()          // и открытая панель карточки закрывается — как у «+⏰»
 }
@@ -3348,9 +3377,8 @@ onBeforeUnmount(() => {
       <canvas id="canvasEl" ref="canvasEl"></canvas>
       <LiteInspector v-if="selectedNode && selectedNode.kind !== 'notify' && selectedNode.kind !== 'device'" :node="selectedNode" :lang="lang" :x="inspectorPos.x" :y="inspectorPos.y" @delete="deleteSelected" @save="saveAndCloseInspector" @notify="inspAddNotify" @change="onNodeChange" @view="viewImage = $event" @image="attachImage(selectedNode, $event)"
                  @pick="pickFileLink(selectedNode)" @open="(p) => openFileLink(p, selectedNode)" />
-      <!-- Напоминание редактируется СВОЕЙ панелью: нет подзадач, рисунка и статуса; задача и
-           описание показаны серым (скопированы с основной карточки), есть дата/время, количество
-           и повторения, каналы доставки. -->
+      <!-- Напоминание редактируется СВОЕЙ панелью: нет подзадач, рисунка и статуса; есть дата/время,
+           повторения, каналы доставки, и поля «Задача»/«Описание» — редактируемые (08.10.26). -->
       <ReminderPanel v-else-if="selectedNode && selectedNode.kind !== 'device'" :node="selectedNode" :lang="lang" :x="inspectorPos.x" :y="inspectorPos.y" @delete="deleteSelected" @save="saveAndCloseInspector" @change="onNodeChange" />
       <!-- Панель лицензии: «Оцените приложение», четыре строки с выбором, внизу сумма и «Оплатить». -->
     <LicensePanel v-if="showLicense" :lang="lang" :x="24" :y="70"

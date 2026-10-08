@@ -7,7 +7,8 @@ import DateField from './DateField.vue'
    те же классы оформления (.inspector/.lbl/.inp/.sel/.row2/.btn-row/...), поэтому вид один.
    Отличия (просьба Ярослава 01.10.26):
      • нет полей «Подзадачи», «Рисунок», «Затенение рисунка» и «Статус» — у напоминания их нет;
-     • «Задача» и «Описание» показаны СЕРО, только для чтения: они скопированы с основной карточки;
+     • «Задача» и «Описание» — РЕДАКТИРУЕМЫЕ поля (Ярослав 08.10.26): у привязанного напоминания
+       их копирует основная карточка, у отдельного — пустые, и править можно и там, и там;
      • вместо статуса — дата и время, когда напоминание прозвучит, плюс количество и повторения;
      • «Куда придёт» — НЕСКОЛЬКО вариантов сразу (галочки): компьютер / телефон
        (02.10.26 Telegram и Макс временно убраны из списка — данные карточек не тронуты);
@@ -29,6 +30,8 @@ const colorOptions = computed(() => COLOR_NAMES.map((key, i) => ({
 const CH_LABEL_KEY = { pc: 'remPc', phone: 'remPhone', tablet: 'remTablet', telegram: 'remTg', vkmax: 'remVk' }
 const chLabel = (ch) => { const k = CH_LABEL_KEY[ch]; return k ? t(k) : ch }
 
+function setLabel(e) { props.node.title = e.target.value; emit('change') }
+function setDesc(e) { props.node.description = e.target.value; emit('change') }
 // Дата приходит из DateField строкой 'YYYY-MM-DD' (свой календарь: нативный подписывался на
 // языке браузера) ; пустая строка — очистка. Формат хранения в graph.json не менялся.
 function setDate(v) { props.node.due = v || ''; emit('change') }
@@ -71,13 +74,16 @@ function setColor(c) {
   <div class="inspector rem" :style="{ '--ox': (x ?? 0) + 'px', '--oy': (y ?? 0) + 'px' }">
     <div class="rem-head"><span class="emo">⏰</span> {{ t('notifyTitle') }}</div>
 
-    <!-- Задача и описание — не редактируются: они копируются с основной карточки при создании
-         напоминания. Подпись об этом убрана по просьбе Ярослава 01.10.26. -->
+    <!-- Задача и описание. У привязанного напоминания их копирует основная карточка при
+         создании, у отдельного (Ярослав 08.10.26) их нет вовсе — поэтому поля РЕДАКТИРУЕМЫЕ
+         в обоих случаях: пользователь правит что хочет, связь с задачей этого не запрещает. -->
     <label class="lbl">{{ ru ? 'Задача' : 'Task' }}</label>
-    <div class="rem-ro">{{ (node.title || '').trim() || '—' }}</div>
+    <input class="inp" :value="node.title || ''" @input="setLabel($event)"
+           :placeholder="ru ? 'Задача' : 'Task'" />
 
     <label class="lbl">{{ ru ? 'Описание' : 'Description' }}</label>
-    <div class="rem-ro">{{ (node.description || '').trim() || '—' }}</div>
+    <textarea class="inp ta" rows="3" :value="node.description || ''" @input="setDesc($event)"
+              :placeholder="ru ? 'Что нужно сделать…' : 'What to do…'"></textarea>
 
     <div class="row2">
       <div class="cell">
