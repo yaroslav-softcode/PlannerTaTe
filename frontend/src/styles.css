@@ -477,6 +477,26 @@ select option {
 .rlist-wrap { position: absolute; right: 16px; bottom: 16px; z-index: 35; }
 canvas#canvasEl { display: block; width: 100%; height: 100%; position: relative; touch-action: none; }
 
+/* Меню «Дома» по правому клику (Ярослав 09.10.26): «Добавить фон» / «Убрать фон».
+   Панель в стиле активной темы — те же переменные, что у .inspector и .theme-pop. */
+.home-menu {
+  position: fixed; z-index: 40; min-width: 148px; padding: 6px;
+  display: grid; gap: 4px;
+  background: var(--panel-bg); border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm); box-shadow: var(--panel-shadow);
+  backdrop-filter: var(--panel-blur);
+}
+.home-menu button {
+  display: flex; align-items: center; gap: 7px; width: 100%; padding: 6px 9px;
+  background: var(--btn-bg); color: var(--btn-text); border: 1px solid var(--btn-border);
+  border-radius: calc(var(--radius-sm) - 2px); font-family: inherit; font-size: 12px;
+  cursor: pointer; transition: background .12s, border-color .12s; text-align: left;
+}
+.home-menu button:hover { background: var(--btn-hover); border-color: var(--accent); }
+.home-menu button:disabled { opacity: .45; cursor: default; }
+.home-menu button:disabled:hover { background: var(--btn-bg); border-color: var(--btn-border); }
+.home-menu button .hm-ico { font-size: 13px; line-height: 1; }
+
 /* Подсказка по управлению — внизу сайдбара (перенесена из-под холста 01.10.26 просьбой
    «помести в боковую панель где нибудь внизу»). margin-top: auto прижимает её к низу колонки. */
 .side-hint {

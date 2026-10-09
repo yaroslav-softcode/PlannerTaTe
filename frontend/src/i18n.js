@@ -174,6 +174,10 @@ export const L18N = {
     /* Панели устройств на холсте («Смартфон»/«Планшет», 06.10.26, просьба Ярослава) */
     devicePhone: 'Смартфон',
     deviceTablet: 'Планшет',
+    deviceHome: 'Дом',            // плитка «Дом» (Ярослав 09.10.26)
+    deviceHomeImageOnly: 'На «Дом» можно бросить только картинку — она станет его фоном',
+    homeBgAdd: 'Добавить фон',    // меню «Дома» по правому клику (Ярослав 09.10.26)
+    homeBgRemove: 'Убрать фон',
     deviceNoDelete: 'Панель устройства удалить нельзя — она системная',
     deviceFileOk: 'Файл уехал на «{dev}» — дойдёт при синхронизации',
     deviceFileFail: 'Не удалось отправить файл на устройство',
@@ -284,6 +288,10 @@ export const L18N = {
     /* Device panels on the canvas (“Smartphone”/“Tablet”, 06.10.26) */
     devicePhone: 'Phone',
     deviceTablet: 'Tablet',
+    deviceHome: 'Home',           // “Home” tile (Yar 09.10.26)
+    deviceHomeImageOnly: 'Only an image can be dropped on “Home” — it becomes its background',
+    homeBgAdd: 'Add background',  // “Home” right-click menu (Yar 09.10.26)
+    homeBgRemove: 'Remove background',
     deviceNoDelete: "The device panel can't be deleted — it is a system element",
     deviceFileOk: 'The file is on its way to “{dev}” — it will arrive at the next sync',
     deviceFileFail: 'Could not send the file to the device',

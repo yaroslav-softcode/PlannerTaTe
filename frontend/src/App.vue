@@ -149,6 +149,10 @@ const PORT = {
   r: 4.2,                 // радиус порта (координаты графа)
   ring: 2.2,              // толщина кольца на входе
 }
+// Плитка «Дом» (Ярослав 09.10.26): в 1.5 раза больше планшета, входов нет, ЧЕТЫРЕ выхода —
+// слева, справа, сверху, снизу. Индекс слота = индекс стороны в HOME_SIDES.
+const HOME_SIDE = 84
+const HOME_SIDES = ['left', 'right', 'top', 'bottom']
 // Кнопка «открыть описание целиком» — лупа с плюсом внутри (просьба Ярослава 05.10.26).
 // Рисуем линиями, цветом текста карточки: у эмодзи на Windows свои цвета, а карточка должна
 // жить в палитре темы (как будильник и значки вложений).
@@ -174,9 +178,12 @@ function drawZoomBtn(ctx, cx, cy, size, color) {
   ctx.restore()
 }
 
-// Локальная точка порта: СЕРЕДИНА стороны (side: 'left' | 'right').
+// Локальная точка порта: СЕРЕДИНА стороны (side: 'left' | 'right' | 'top' | 'bottom').
+// 'top'/'bottom' нужны плитке «Дом» — у неё выходы и на верхней, и на нижней грани.
 function portLocalPos(node, side) {
   const w = node.size[0], h = node.size[1]
+  if (side === 'top') return [w / 2, 0]
+  if (side === 'bottom') return [w / 2, h]
   return side === 'left' ? [0, h / 2] : [w, h / 2]
 }
 // Стороны портов карточки: у неё ОДИН вход (кольцо) и ОДИН выход (точка), и они всегда на
@@ -415,7 +422,17 @@ class RectNode extends LGraphNode {
     this.hideSlotDots()
     // Панель устройства — системная плитка: вход ей не нужен (кольца нет), ресайз запрещён
     // (LiteGraph эти поля из файла не восстанавливает — задаём при каждой загрузке графа).
-    if ((this.kind || 'task') === 'device') { this.resizable = false; this.inputs = [] }
+    // «Дом» (Ярослав 09.10.26): кроме отсутствия входа — ЧЕТЫРЕ выхода (слева, справа, сверху,
+    // снизу); индекс слота = индекс стороны в HOME_SIDES.
+    if ((this.kind || 'task') === 'device') {
+      this.resizable = false; this.inputs = []
+      // Выходы «Дома» привязаны к сторонам НАВСЕГДА (индекс слота = HOME_SIDES), но ссылки
+      // из сохранённого графа бережём: перекладываем их в слоты той же стороны.
+      if (this.device === 'home' && Array.isArray(this.outputs) && this.outputs.length) {
+        const old = this.outputs
+        this.outputs = HOME_SIDES.map((_, i) => old[i] || { name: 'выход', type: '*', links: null, label: '' })
+      }
+    }
   }
   // Заводские точки портов LiteGraph рисует своим зелёным (#7F7). Гасим их прозрачным
   // цветом слота — свои порты (кольцо на входе, точка на выходе) рисует тема.
@@ -572,6 +589,7 @@ class RectNode extends LGraphNode {
   // падало «I is not a function» — подпись панели не рисовалась. Баг найден и исправлен 06.10.26).
   drawDeviceTile(ctx, tm, acc, r) {
     const w = this.size[0], h = this.size[1]
+    const isHome = this.device === 'home'
     const isTab = this.device === 'tablet'
     // 1. Тело: градиент темы + тень (как у карточки).
     ctx.save()
@@ -583,7 +601,22 @@ class RectNode extends LGraphNode {
     ctx.fillStyle = g
     ctx.fill()
     ctx.restore()
-    // 2. Рамка: цвет — акцент темы, свечение — из темы (у светлых тем его нет).
+    // 2. Фон, брошенный на «Дом» перетаскиванием (Ярослав 09.10.26): картинка перекрывает
+    // плитку, и домик-глиф перестаёт быть виден (подпись остаётся). Рисуем ДО рамки, чтобы
+    // рамка и свечение плитки оставались поверх картинки (как у обычной карточки).
+    const cx = w / 2
+    const homeBg = isHome && this.image && getImage(this.image).complete && getImage(this.image).naturalWidth
+    if (homeBg) {
+      const img = getImage(this.image)
+      const k = Math.max(w / img.naturalWidth, h / img.naturalHeight)
+      const dw = img.naturalWidth * k, dh = img.naturalHeight * k
+      ctx.save()
+      roundRect(ctx, 0, 0, w, h, r); ctx.clip()
+      ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh)
+      // Затемнения НЕТ: «фон должен быть не затемнённый» (Ярослав 09.10.26).
+      ctx.restore()
+    }
+    // 3. Рамка: цвет — акцент темы, свечение — из темы (у светлых тем его нет).
     ctx.save()
     if (tm.glowBlur) { ctx.shadowColor = tm.glowColor(acc); ctx.shadowBlur = tm.glowBlur; ctx.shadowOffsetY = tm.glowOffsetY || 0 }
     roundRect(ctx, tm.borderW / 2, tm.borderW / 2, w - tm.borderW, h - tm.borderW, r)
@@ -591,7 +624,7 @@ class RectNode extends LGraphNode {
     ctx.strokeStyle = tm.border(acc)
     ctx.stroke()
     ctx.restore()
-    // 3. Блик по верху внутри — «стекло».
+    // 4. Блик по верху внутри — «стекло».
     if (tm.inner) {
       ctx.save()
       roundRect(ctx, 0, 0, w, h, r); ctx.clip()
@@ -599,14 +632,34 @@ class RectNode extends LGraphNode {
       ctx.beginPath(); ctx.moveTo(r * 0.7, 1.2); ctx.lineTo(w - r * 0.7, 1.2); ctx.stroke()
       ctx.restore()
     }
-    // 4. Глиф устройства: корпус, экран (подкрашен акцентом), детали.
-    const cx = w / 2
+    // 5. Глиф устройства: корпус, экран (подкрашен акцентом), детали.
     ctx.save()
     ctx.lineJoin = 'round'
     ctx.strokeStyle = tm.titleColor
     ctx.fillStyle = tm.titleColor
     ctx.lineWidth = 1.3
-    if (isTab) {
+    if (isHome) {
+      if (!homeBg) {
+      // «Дом» — вариант Ярослава 09.10.26: крыша опущена ниже (свесы на середине высоты,
+      // стены начинаются чуть выше линии свеса, скат проходит вплотную над углами стен).
+      // ТОЛЬКО контуры (никакой заливки), симметричен. Подписи нет — глиф по центру плитки.
+      ctx.lineWidth = 1.6
+      const top = 18, eave = top + 24, base = top + 48   // H=48, свес ровно на 0.5H
+      const roofHalf = 24, wallHalf = 17
+      const wallTop = top + 20                            // стены чуть выше свеса
+      ctx.beginPath()   // крыша со свесом (опущена)
+      ctx.moveTo(cx - roofHalf, eave); ctx.lineTo(cx, top); ctx.lineTo(cx + roofHalf, eave); ctx.stroke()
+      ctx.beginPath()   // стены и пол
+      ctx.moveTo(cx - wallHalf, wallTop); ctx.lineTo(cx - wallHalf, base)
+      ctx.lineTo(cx + wallHalf, base); ctx.lineTo(cx + wallHalf, wallTop); ctx.stroke()
+      ctx.beginPath()   // дверь по центру
+      ctx.moveTo(cx - 4.5, base); ctx.lineTo(cx - 4.5, base - 14)
+      ctx.lineTo(cx + 4.5, base - 14); ctx.lineTo(cx + 4.5, base); ctx.stroke()
+      const ws = 8, wy = top + 26   // два окна
+      ctx.beginPath(); ctx.rect(cx - 14.5, wy, ws, ws); ctx.stroke()
+      ctx.beginPath(); ctx.rect(cx + 6.5, wy, ws, ws); ctx.stroke()
+      }
+    } else if (isTab) {
       const bw = 28, bh = 21, bx = cx - bw / 2, by = 10
       roundRect(ctx, bx, by, bw, bh, 3); ctx.stroke()
       ctx.save(); ctx.globalAlpha = 0.30; ctx.fillStyle = acc
@@ -621,16 +674,20 @@ class RectNode extends LGraphNode {
       ctx.beginPath(); ctx.arc(cx, by + bh - 2.8, 1.1, 0, Math.PI * 2); ctx.stroke()
     }
     ctx.restore()
-    // 5. Подпись: кегль не больше 10 (плитка маленькая), КАПС — как у названий темы.
-    ctx.save()
-    ctx.font = `${tm.titleWeight} ${Math.min(10, tm.titleSize)}px ${tm.titleFamily}`
-    ctx.fillStyle = tm.titleColor
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'alphabetic'
-    let label = t(isTab ? 'deviceTablet' : 'devicePhone')
-    if (tm.titleUp) label = label.toUpperCase()
-    ctx.fillText(label, cx, h - 6)
-    ctx.restore()
+    // 6. Подпись: кегль не больше 10 (плитка маленькая), КАПС — как у названий темы.
+    // У «Дома» подписи НЕТ вообще (Ярослав 09.10.26: «надпись дом убрать полностью») —
+    // поэтому глиф центрирован по плитке.
+    if (!isHome) {
+      ctx.save()
+      ctx.font = `${tm.titleWeight} ${Math.min(isHome ? 12 : 10, tm.titleSize)}px ${tm.titleFamily}`
+      ctx.fillStyle = tm.titleColor
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'alphabetic'
+      let label = t(isHome ? 'deviceHome' : (isTab ? 'deviceTablet' : 'devicePhone'))
+      if (tm.titleUp) label = label.toUpperCase()
+      ctx.fillText(label, cx, h - 6)
+      ctx.restore()
+    }
   }
   // Порт панели устройства: точка на СЕРЕДИНЕ ОБРАЩЁННОЙ СТОРОНЫ (кольца нет — решение Ярослава
   // 06.10.26; место перенесено с верхнего центра 06.10.26 по его же просьбе: у «Смартфона» точка
@@ -666,9 +723,15 @@ class RectNode extends LGraphNode {
   getConnectionPos(is_input, slot_number, out) {
     const dst = out || [0, 0]
     const isDevice = (this.kind || 'task') === 'device'
+    const isHome = isDevice && this.device === 'home'
     const ps = portSides(this)
     let side = is_input ? ps.in : ps.out
-    if (isDevice) side = ps.hasOut ? ps.out : (this.device === 'tablet' ? 'left' : 'right')
+    if (isHome && !is_input) {
+      // «Дом»: выход НАВСЕГДА привязан к слоту — 0 слева, 1 справа, 2 сверху, 3 снизу
+      // (Ярослав 09.10.26). Карточка цепляется к БЛИЖАЙШЕМУ выходу: слот выбираем по тому,
+      // с какой стороны дома стоит целевая карточка (см. homeSlotFor).
+      side = HOME_SIDES[Math.max(0, Math.min(3, slot_number | 0))]
+    } else if (isDevice) side = ps.hasOut ? ps.out : (this.device === 'tablet' ? 'left' : 'right')
     if (is_input && !ps.hasIn && liteCanvas && liteCanvas.connecting_output &&
         liteCanvas.connecting_node && liteCanvas.connecting_node !== this) {
       const c = liteCanvas.connecting_node
@@ -680,7 +743,7 @@ class RectNode extends LGraphNode {
     // Направление конца линии — по стороне порта: линия из левого края сначала уходит ВЛЕВО и
     // лишь потом изгибается к задаче (поправка Ярослава 06.10.26 — сплайн загибался не туда).
     const slot = is_input ? (this.inputs || [])[slot_number] : (this.outputs || [])[slot_number]
-    if (slot) slot.dir = (side === 'left') ? LiteGraph.LEFT : LiteGraph.RIGHT
+    if (slot) slot.dir = (side === 'left') ? LiteGraph.LEFT : (side === 'top') ? LiteGraph.UP : (side === 'bottom') ? LiteGraph.DOWN : LiteGraph.RIGHT
     return dst
   }
   // Уникальные локальные точки портов (для отрисовки): входы или выходы. Несколько слотов,
@@ -1260,7 +1323,7 @@ async function initCanvas() {
   // Сначала пробуем поднять последний сохранённый граф (graph.json через /api/load).
   // Демо-узлы создаём только если сохранения нет — иначе они перекрыли бы данные.
   const loaded = await loadGraph()
-  if (!loaded) createDemoNodes()
+  const demoRoot = loaded ? null : createDemoNodes()
   // Графы прошлых версий держали одну ссылку в поле file — переводим её в список files
   // и убираем старое поле, чтобы оно не тянулось дальше.
   for (const n of (graph._nodes || [])) {
@@ -1268,9 +1331,17 @@ async function initCanvas() {
     if (n.file) delete n.file
   }
 
-  // Панели устройств («Смартфон»/«Планшет») — системные плитки: создаём при загрузке,
+  // Панели устройств («Дом»/«Смартфон»/«Планшет») — системные плитки: создаём при загрузке,
   // если их ещё нет (см. ensureDevicePanels).
   ensureDevicePanels()
+
+  // Первый запуск: стартовые задачи по умолчанию цепляются к плитке «Дом» (просьба Ярослава
+  // 09.10.26: «к нему должны привязываться первые задачи, которые у нас по умолчанию возникают
+  // при первом запуске»). Выход выбирается ближайший — как у любой привязанной карточки.
+  if (demoRoot) {
+    const home = (graph._nodes || []).find((n) => (n.kind || 'task') === 'device' && n.device === 'home')
+    if (home) setTimeout(() => { try { home.connect(0, demoRoot, 0) } catch (e) {} }, 90)
+  }
 
   // Активное окно в 8 раз больше + содержимое в его середине (см. FIELD_AREA_X).
   applyFieldView()
@@ -1343,6 +1414,7 @@ function createDemoNodes() {
 
   const mkLink = (from, to) => { try { from.connect(0, to, 0) } catch (e) {} }
   setTimeout(() => { mkLink(n1, n2); mkLink(n1, n3) }, 60)
+  return n1   // корневая карточка — к ней при первом запуске цепляется плитка «Дом»
 }
 
 function resizeCanvas() {
@@ -1747,15 +1819,26 @@ function createNode(cx, cy) {
   return n
 }
 
-// --- Панели устройств («Смартфон» и «Планшет»), 06.10.26 ------------------------------------
-// Просьба Ярослава: две системные плитки на холсте 56×56. Их нельзя удалить; задача, пришедшая
+// --- Панели устройств («Дом», «Смартфон» и «Планшет»), 06.10.26 / «Дом» 09.10.26 -----------
+// Просьба Ярослава: системные плитки на холсте. Их нельзя удалить; задача, пришедшая
 // с устройства синхронизацией, встаёт к своей панели РЕБЁНКОМ (связь «панель → задача» ставит
 // backend при приёме задачи, см. _add_phone_task); файл, брошенный на плитку, уезжает на
 // устройство (sendFilesToDevice). Плитки создаются ОДИН раз при загрузке графа, если их ещё нет;
 // место — слева от самой левой карточки, чтобы глаз сразу их находил; если слева места нет
 // (карточки стоят у самого края), плитки встают НИЖЕ всего плана, чтобы ничего не накрывать
 // (просьба Ярослава 06.10.26: под «Смартфоном» карточки быть не должно).
+// «Дом» (Ярослав 09.10.26): в 1.5 раза больше планшета (84×84), входов НЕТ, ЧЕТЫРЕ выхода —
+// слева, справа, сверху, снизу; привязанные карточки цепляются к БЛИЖАЙШЕМУ выходу
+// (сторона считается по положению карточки — homeSideFor). На «Дом» можно бросить КАРТИНКУ —
+// она становится фоном плитки, и домик-глиф перестаёт быть виден.
 const DEVICE_SIDE = 56
+function homeSideFor(home, target) {
+  const hx = home.pos[0] + home.size[0] / 2, hy = home.pos[1] + home.size[1] / 2
+  const ts = Array.isArray(target.size) ? target.size : [0, 0]
+  const dx = target.pos[0] + ts[0] / 2 - hx, dy = target.pos[1] + ts[1] / 2 - hy
+  if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? 'left' : 'right'
+  return dy < 0 ? 'top' : 'bottom'
+}
 function ensureDevicePanels() {
   if (!graph || readOnly.value) return
   const have = new Set()
@@ -1767,23 +1850,39 @@ function ensureDevicePanels() {
     maxBottom = Math.max(maxBottom, n.pos[1] + (Array.isArray(n.size) ? n.size[1] : DEVICE_SIDE))
   }
   const leftRoom = isFinite(minX) ? minX - 150 : Infinity   // есть ли ~150 px слева от плана
-  const baseX = leftRoom >= 20 ? leftRoom : (isFinite(minX) ? minX : 20)
-  const baseY = leftRoom >= 20 ? (isFinite(minY) ? minY : 60)
+  let baseX = leftRoom >= 20 ? leftRoom : (isFinite(minX) ? minX : 20)
+  let baseY = leftRoom >= 20 ? (isFinite(minY) ? minY : 60)
                               : (isFinite(maxBottom) ? maxBottom + 40 : 60)
+  // Если на холсте УЖЕ стоят панели (граф без «Дома»), новую плитку ставим СЛЕВА от них,
+  // в их верхнем ряду — иначе она легла бы ровно на «Смартфон» (баг места, найдено 09.10.26).
+  let tileX = Infinity, tileY = Infinity
+  for (const n of (graph._nodes || [])) {
+    if ((n.kind || 'task') !== 'device') continue
+    tileX = Math.min(tileX, n.pos[0]); tileY = Math.min(tileY, n.pos[1])
+  }
+  if (isFinite(tileX)) { baseX = tileX - HOME_SIDE - 20; baseY = tileY }
   let made = false
-  for (const [i, dev] of ['phone', 'tablet'].entries()) {
+  let y = baseY
+  for (const dev of ['home', 'phone', 'tablet']) {
     if (have.has(dev)) continue
+    const side = dev === 'home' ? HOME_SIDE : DEVICE_SIDE
     const n = new RectNode()
     n.kind = 'device'
     n.device = dev
-    n.size = [DEVICE_SIDE, DEVICE_SIDE]
+    n.size = [side, side]
     n.resizable = false                 // плитка не тянется за уголок
     n.inputs = []                       // кольца нет — панель только источник связей
+    if (dev === 'home') {
+      // Четыре выхода: 0 — слева, 1 — справа, 2 — сверху, 3 — снизу (сторона в
+      // getConnectionPos считается по карточке, «ближайший выход»).
+      n.outputs = HOME_SIDES.map(() => ({ name: 'выход', type: '*', links: null, label: '' }))
+    }
     n.hideSlotDots()
-    n.title = t(dev === 'tablet' ? 'deviceTablet' : 'devicePhone')
+    n.title = t(dev === 'home' ? 'deviceHome' : (dev === 'tablet' ? 'deviceTablet' : 'devicePhone'))
     n.color = '#5b8fd9'
     graph.add(n)
-    n.pos = [baseX, baseY + i * (DEVICE_SIDE + 20)]
+    n.pos = [baseX, y]
+    y += side + 20
     made = true
   }
   if (made) {
@@ -1807,7 +1906,19 @@ function onDblClick(ev) {
   try { parent = graph.getNodeOnPos(gx, gy) } catch (e) {}
   if (!parent) return                 // клик по пустому месту — ничего не создаём
   parent = toRaw(parent)
-  if ((parent.kind || 'task') === 'device') return   // по панели устройства подзадача не создаётся
+  if ((parent.kind || 'task') === 'device') {
+    // По плиткам «Смартфон»/«Планшет» подзадача не создаётся. По «Дому» — создаётся:
+    // «при двойном нажатии ЛКМ должна появляться новая задача и связь к ней» (Ярослав 09.10.26).
+    if (parent.device !== 'home') return
+    selectedNode.value = null
+    const child = createSubtask(parent)
+    if (!child) return
+    rehomeLinks()                     // связь садится на выход «Дома» со стороны новой карточки
+    liteCanvas.selectNode(child)
+    liteCanvas.setDirty(true, true)
+    onNodeChange()
+    return
+  }
   selectedNode.value = null           // панель по двойному клику НЕ открываем: она только по ПКМ
   const child = createSubtask(parent)
   if (!child) return
@@ -2597,7 +2708,17 @@ function onCanvasDrop(ev) {
     return
   }
   // Панель устройства: ЛЮБОЙ файл, брошенный на плитку, уезжает на устройство (06.10.26).
-  if ((node.kind || 'task') === 'device') { sendFilesToDevice(node, dt.files); return }
+  // «Дом» (Ярослав 09.10.26): КАРТИНКА, брошенная на него, становится ФОНОМ плитки —
+  // домик-глиф при этом перестаёт быть виден. Прочие файлы «Дом» не принимает.
+  if ((node.kind || 'task') === 'device') {
+    const dev = toRaw(node).device
+    if (dev === 'home') {
+      if (f.type && f.type.indexOf('image/') === 0) attachImage(node, f)
+      else flash(t('deviceHomeImageOnly'))
+      return
+    }
+    sendFilesToDevice(node, dt.files); return
+  }
   if (f.type && f.type.indexOf('image/') === 0) { attachImage(node, f); return }
   // У напоминания нижнюю строку целиком занимает подпись повторения — значку там нет места,
   // и ссылка была бы невидимой и некликабельной. Говорим прямо, а не делаем вид.
@@ -2648,9 +2769,18 @@ function onContextMenu(ev) {
   try {
     found = graph.getNodeOnPos(gx, gy)   // LiteGraph hit-test over _nodes (top-most wins)
   } catch (e) {}
-  if (!found) return
+  if (!found) { homeMenu.value = null; return }
   // Панель устройства: панель карточки для неё не открываем — системной плитке править нечего.
-  if ((found.kind || 'task') === 'device') { ev.preventDefault(); ev.stopPropagation(); return }
+  if ((found.kind || 'task') === 'device') {
+    ev.preventDefault(); ev.stopPropagation()
+    // «Дом» (Ярослав 09.10.26): правый клик — маленькое меню «Добавить фон» / «Убрать фон».
+    if (toRaw(found).device === 'home' && !readOnly.value) {
+      homeMenu.value = { node: toRaw(found), x: ev.clientX, y: ev.clientY }
+      nextTick(() => clampHomeMenu())
+    } else homeMenu.value = null
+    return
+  }
+  homeMenu.value = null
   ev.preventDefault()
   ev.stopPropagation()   // не даём LiteGraph-обработчику очистить выделение после правого клика
   liteCanvas.selectNode(found)
@@ -2675,6 +2805,63 @@ function clampInspector(cx, cy) {
   const x = Math.min(Math.max(4, cx), Math.max(4, window.innerWidth - r.width - 4))
   const y = Math.min(Math.max(4, cy), Math.max(4, window.innerHeight - r.height - 4))
   if (x !== inspectorPos.value.x || y !== inspectorPos.value.y) inspectorPos.value = { x, y }
+}
+
+// --- Меню «Дома» по правому клику (Ярослав 09.10.26) ------------------------------------
+// Две кнопки: «Добавить фон» (диалог выбора картинки) и «Убрать фон» (снова видно домик и
+// подпись). Панель оформлена в стиле активной темы (те же CSS-переменные, что у .inspector).
+const homeMenu = ref(null)          // { node, x, y } | null
+
+function clampHomeMenu() {
+  const el = document.querySelector('.home-menu')
+  if (!el || !homeMenu.value) return
+  const r = el.getBoundingClientRect()
+  const x = Math.min(Math.max(4, homeMenu.value.x), Math.max(4, window.innerWidth - r.width - 4))
+  const y = Math.min(Math.max(4, homeMenu.value.y), Math.max(4, window.innerHeight - r.height - 4))
+  if (x !== homeMenu.value.x || y !== homeMenu.value.y) homeMenu.value = { ...homeMenu.value, x, y }
+}
+
+// Клик мимо меню — закрываем (ловушка на capture: LiteGraph не должен её «съесть»).
+function onDocMouseDownCloseHomeMenu(ev) {
+  if (!homeMenu.value) return
+  const el = ev.target && ev.target.closest ? ev.target.closest('.home-menu') : null
+  if (!el) homeMenu.value = null
+}
+
+// «Добавить фон»: нативный диалог Windows (/api/pick_file — браузер путь не отдаёт),
+// выбранную картинку сервер кладёт в blobs/ (/api/image/from_path), и она становится фоном.
+async function homeAddBackground() {
+  const n = homeMenu.value && toRaw(homeMenu.value.node)
+  homeMenu.value = null
+  if (!n || readOnly.value) return
+  try {
+    const r = await fetch('/api/pick_file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Plannertate-Client': '1' },
+      body: JSON.stringify({}),
+    })
+    const j = await r.json().catch(() => ({}))
+    if (j.status === 'cancel') return                        // закрыл диалог — ничего не делаем
+    if (j.status !== 'ok' || !j.path) { flash(j.error || t('filePickFail')); return }
+    const r2 = await fetch('/api/image/from_path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Plannertate-Client': '1' },
+      body: JSON.stringify({ path: j.path }),
+    })
+    const j2 = await r2.json().catch(() => ({}))
+    if (j2.status !== 'ok' || !j2.url) { flash(j2.error || t('deviceHomeImageOnly')); return }
+    reactive(n).image = j2.url
+    onNodeChange()
+  } catch (e) { console.error(e); flash(t('filePickFail')) }
+}
+
+// «Убрать фон»: снимаем ссылку — плитка снова рисуется с домиком и подписью.
+function homeRemoveBackground() {
+  const n = homeMenu.value && toRaw(homeMenu.value.node)
+  homeMenu.value = null
+  if (!n || readOnly.value) return
+  reactive(n).image = ''
+  onNodeChange()
 }
 
 // Удаление: работаем с тем, что выбрано в Vue-рефе, а если его нет — с выделением LiteGraph.
@@ -3173,10 +3360,39 @@ document.addEventListener('paste', onPaste)
 
 
 
+// «Дом»: связь всегда уходит в выход ТОЙ СТОРОНЫ, к которой ближе целевая карточка
+// (Ярослав 09.10.26: «карточки, которые к ней привязаны, чтобы они цеплялись к ближайшему
+// выходу»). Слот = сторона: 0 слева, 1 справа, 2 сверху, 3 снизу. Если карточка переехала
+// на другую сторону дома — связь перекладываем в выход этой стороны: сам link не трогаем,
+// меняем только origin_slot (он входит в подпись графа, поэтому автосохранение подхватит).
+function rehomeLinks() {
+  if (!graph) return
+  for (const n of (graph._nodes || [])) {
+    if ((n.kind || 'task') !== 'device' || n.device !== 'home' || !n.outputs) continue
+    for (let s = 0; s < n.outputs.length; s++) {
+      const links = n.outputs[s].links
+      if (!links || !links.length) continue
+      for (const lid of links.slice()) {
+        const l = graph.links[lid]
+        if (!l) continue
+        const tgt = graph.getNodeById(l.target_id)
+        if (!tgt) continue
+        const want = HOME_SIDES.indexOf(homeSideFor(n, tgt))
+        if (want === s || want < 0) continue
+        n.outputs[s].links = n.outputs[s].links.filter((x) => x !== lid)
+        if (!Array.isArray(n.outputs[want].links)) n.outputs[want].links = []
+        n.outputs[want].links.push(lid)
+        l.origin_slot = want
+      }
+    }
+  }
+}
+
 // Рамка активного окна: тонкая линия по периметру, толщина постоянна на экране (1 px).
 function animate() {
   watchAutoSave()
   stepFollowLag()                     // «верёвочка»: подзадачи догоняют перетаскиваемую карточку
+  rehomeLinks()                       // «Дом»: связи переезжают на ближайший выход
   if (liteCanvas) liteCanvas.draw()
   requestAnimationFrame(animate)
 }
@@ -3189,6 +3405,7 @@ onMounted(() => {
   fetch('/api/ui_state', { cache: 'no-store' }).then(r => r.json())
     .then(s => { if (s && !s.theme) pushThemeToServer(themeName.value) }).catch(() => {})
   initCanvas().catch(e => console.error('[plannertate] init failed', e))
+  document.addEventListener('mousedown', onDocMouseDownCloseHomeMenu, true)   // клик мимо меню «Дома» — закрыть
   loadLicense()                        // кнопку «Лицензия» показываем, только если её ещё не оплатили
   loadPhoneState()                     // первый запуск: предложить поставить приложение на телефон
 })
@@ -3207,6 +3424,7 @@ document.addEventListener('visibilitychange', () => {
 onBeforeUnmount(() => {
   clearInterval(themePushTimer)
   hideFileTip()
+  document.removeEventListener('mousedown', onDocMouseDownCloseHomeMenu, true)
   if (canvasEl.value) {
     canvasEl.value.removeEventListener('mousemove', onCanvasHover)
     canvasEl.value.removeEventListener('mouseleave', hideFileTip)
@@ -3389,6 +3607,13 @@ onBeforeUnmount(() => {
     <!-- Восстановление графа из резервной копии (04.10.26) -->
     <RestorePanel v-if="showRestore" :lang="lang" :x="24" :y="70"
                   @close="showRestore = false" @restore="doRestore" />
+
+    <!-- Меню «Дома» по правому клику (Ярослав 09.10.26): две кнопки — добавить/убрать фон.
+         «Убрать фон» неактивна, пока фона нет. -->
+    <div v-if="homeMenu" class="home-menu" :style="{ left: homeMenu.x + 'px', top: homeMenu.y + 'px' }">
+      <button @click="homeAddBackground"><span class="hm-ico">🖼</span>{{ t('homeBgAdd') }}</button>
+      <button :disabled="!homeMenu.node.image" @click="homeRemoveBackground"><span class="hm-ico">✕</span>{{ t('homeBgRemove') }}</button>
+    </div>
 
     <!-- Окно первого запуска: предлагаем поставить приложение на телефон -->
     <div v-if="showPhoneAsk" class="phone-ask-wrap">

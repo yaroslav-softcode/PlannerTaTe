@@ -752,6 +752,46 @@ def api_image_save():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+@app.route("/api/image/from_path", methods=["POST"])
+def api_image_from_path():
+    """Картинка с диска → в blobs/ (фон «Дома» из диалога выбора, 09.10.26).
+    Путь даёт сам сервер (диалог pick_file), браузер его не отдаёт. Проверки те же,
+    что у /api/image/save: только картинки, которые рисует браузер, не больше 4 МБ."""
+    bad = _api_guard()
+    if bad:
+        return bad
+    data = request.get_json(silent=True) or {}
+    path = str(data.get("path") or "").strip()
+    if not path or not os.path.isfile(path):
+        return jsonify({"status": "error", "error": "файл не найден"}), 404
+    try:
+        if os.path.getsize(path) > 4 * 1024 * 1024:
+            return jsonify({"status": "error", "error": "файл слишком большой"}), 400
+        with open(path, "rb") as fh:
+            data_b = fh.read()
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+    head = data_b[:12]
+    if not (head.startswith(b"\xff\xd8") or head.startswith(b"\x89PNG")
+            or head[:4] in (b"GIF8",) or data_b[4:12] == b"WEBPVP"):
+        return jsonify({"status": "error", "error": "это не картинка"}), 400
+    ext = "jpg" if head.startswith(b"\xff\xd8") else (
+          "png" if head.startswith(b"\x89PNG") else (
+          "gif" if head[:4] == b"GIF8" else "webp"))
+    name = hashlib.sha256(data_b).hexdigest()[:32] + "." + ext   # одинаковая картинка — один файл
+    try:
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        p2 = os.path.join(IMAGES_DIR, name)
+        if not os.path.exists(p2):
+            tmp = p2 + ".tmp"
+            with open(tmp, "wb") as fh:
+                fh.write(data_b)
+            os.replace(tmp, p2)
+        return jsonify({"status": "ok", "url": "/images/" + name})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
 @app.route("/images/<name>")
 def image_file(name):
     """Отдать картинку карточки из blobs/ (имя — хэш, путь к чужим файлам закрыт)."""

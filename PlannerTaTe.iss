@@ -1,11 +1,11 @@
-; PlannerTaTe — установщик для Windows (Inno Setup 6).
+﻿; PlannerTaTe — установщик для Windows (Inno Setup 6).
 ; Сборка:  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" PlannerTaTe.iss
 ; Ставится без прав администратора: в папку пользователя, ярлыки на рабочий стол и в «Пуск»,
 ; и (по желанию) автозапуск при входе в Windows — ярлык в «Автозагрузке» с ключом --quiet.
 ; Данные (граф, ключ) живут в %APPDATA%\PlannerTaTe и при удалении НЕ трогаются.
 
 #define AppName "PlannerTaTe"
-#define AppVersion "1.4"
+#define AppVersion "1.5"
 #define AppExe "PlannerTaTe.exe"
 #define AppPublisher "Ярослав Хмелев"
 
