@@ -26,7 +26,7 @@ Access from the network is protected by an access key: from the computer itself 
 ## Installation
 
 ### On the computer
-1. Download **`PlannerTaTe_Setup_1.4.exe`** from the [Releases page](https://github.com/yaroslav-softcode/PlannerTaTe/releases) and run it. Administrator rights are not required.
+1. Download **`PlannerTaTe_Setup_1.6.exe`** from the [Releases page](https://github.com/yaroslav-softcode/PlannerTaTe/releases) and run it. Administrator rights are not required.
 2. When Windows asks about network access, allow it **for private networks** — otherwise the phone will not be able to connect.
 3. The planner opens in the browser and stays in the tray (a small icon next to the clock): from there you can open the planner, look up the address and the key for the phone, or exit.
 
@@ -52,7 +52,7 @@ Everything is kept in `%APPDATA%\PlannerTaTe` on your computer: the plan (`graph
 | `app/PlannerTaTe.apk` | ready Android build of the companion app |
 | `ПАМЯТКА.html`/`.pdf`, `ОПИСАНИЕ_ФУНКЦИЙ.md`/`.pdf` | documentation for the user (Russian) |
 | `PlannerTaTe.spec`, `PlannerTaTe.iss`, `PlannerTaTe_version.txt`, `PlannerTaTe.ico` | the Windows build (PyInstaller + Inno Setup) |
-| `mcp/` | optional: 17 tools that let an AI agent read and fill the plan |
+| `mcp/` | optional: 20 tools that let an AI agent read and fill the plan |
 | `make_icon.py` | draws `PlannerTaTe.ico` |
 
 ## Building and running from the sources
@@ -72,7 +72,7 @@ python plannertate.py      # the same, but with the tray icon
 
 # 3) the Windows installer (optional)
 pyinstaller --clean --noconfirm PlannerTaTe.spec
-ISCC.exe PlannerTaTe.iss   # -> dist\PlannerTaTe_Setup_1.4.exe
+ISCC.exe PlannerTaTe.iss   # -> dist\PlannerTaTe_Setup_1.6.exe
 ```
 
 Environment variables for tests and special cases: `PLANNERTATE_PORT`, `PLANNERTATE_HOST`, `PLANNERTATE_DATA` (a different data folder), `PLANNERTATE_NO_BROWSER`, `PLANNERTATE_NO_SHORTCUT`.
@@ -115,7 +115,7 @@ MIT — see [LICENSE](LICENSE). © Yaroslav Khmelev.
 ## Установка
 
 ### На компьютер
-1. Скачайте **`PlannerTaTe_Setup_1.4.exe`** со [страницы выпусков](https://github.com/yaroslav-softcode/PlannerTaTe/releases) и запустите. Права администратора не нужны.
+1. Скачайте **`PlannerTaTe_Setup_1.6.exe`** со [страницы выпусков](https://github.com/yaroslav-softcode/PlannerTaTe/releases) и запустите. Права администратора не нужны.
 2. Когда Windows спросит про доступ к сети — выберите **«Разрешить» для частных сетей**, иначе телефон не подключится.
 3. Планировщик откроется в браузере и останется в трее (маленький значок рядом с часами): через него можно открыть планировщик, посмотреть адрес и ключ для телефона, выйти.
 
@@ -141,7 +141,7 @@ MIT — see [LICENSE](LICENSE). © Yaroslav Khmelev.
 | `app/PlannerTaTe.apk` | готовая сборка приложения для телефона |
 | `ПАМЯТКА.html`/`.pdf`, `ОПИСАНИЕ_ФУНКЦИЙ.md`/`.pdf` | документация для пользователя |
 | `PlannerTaTe.spec`, `PlannerTaTe.iss`, `PlannerTaTe_version.txt`, `PlannerTaTe.ico` | сборка для Windows (PyInstaller + Inno Setup) |
-| `mcp/` | дополнительно: 17 инструментов, которыми ИИ-агент читает и заполняет план |
+| `mcp/` | дополнительно: 20 инструментов, которыми ИИ-агент читает и заполняет план |
 | `make_icon.py` | рисует `PlannerTaTe.ico` |
 
 ## Сборка и запуск из исходников
@@ -161,7 +161,7 @@ python plannertate.py      # то же самое, но со значком в �
 
 # 3) установщик для Windows (не обязательно)
 pyinstaller --clean --noconfirm PlannerTaTe.spec
-ISCC.exe PlannerTaTe.iss   # -> dist\PlannerTaTe_Setup_1.4.exe
+ISCC.exe PlannerTaTe.iss   # -> dist\PlannerTaTe_Setup_1.6.exe
 ```
 
 Переменные окружения для проверок и особых случаев: `PLANNERTATE_PORT`, `PLANNERTATE_HOST`, `PLANNERTATE_DATA` (другая папка данных), `PLANNERTATE_NO_BROWSER`, `PLANNERTATE_NO_SHORTCUT`.
