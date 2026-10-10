@@ -21,6 +21,7 @@ import socket
 import subprocess
 import hashlib
 import threading
+import queue
 import urllib.request
 from flask import Flask, request, jsonify, send_from_directory, Response, send_file, redirect
 
@@ -509,12 +510,12 @@ def _save_state(state):
 # Раньше автосохранение приложения писало graph.json напрямую: сбой в момент записи портил
 # файл, а случайный пустой граф (баг страницы, пустая вкладка) за 600 мс затирал весь план.
 # Теперь любая запись графа идёт через _write_graph: временный файл + os.replace (файл либо
-# старый, либо новый — полуслоя не бывает), перед записью держим свежие копии, и мы не
-# сохраняем граф, в котором карточек внезапно стало сильно меньше, чем на диске.
-GRAPH_BACKUP_KEEP = 24          # сколько автоматических копий хранить (ручные — свои 20)
+# старый, либо новый — полуслоя не бывает), и мы не сохраняем граф, в котором карточек
+# внезапно стало сильно меньше, чем на диске.
+# 10.10.26 (просьба Ярослава): АВТОМАТИЧЕСКИЕ резервные копии при сохранении ОТКЛЮЧЕНЫ —
+# копии делаются только вручную (кнопка в сайдбаре /api/backup или команда backup_graph).
 GRAPH_SHRINK_MIN = 8            # на графе меньше столько карточек — защиту не включаем
 GRAPH_SHRINK_RATIO = 0.5        # автосохранение отклоняем, если карточек стало меньше половины
-_last_graph_backup = [0.0]      # когда в последний раз сделали автоматическую копию
 
 
 def _graph_node_count(data):
@@ -522,38 +523,12 @@ def _graph_node_count(data):
     return len(n) if isinstance(n, list) else 0
 
 
-def _graph_backups():
-    return sorted(f for f in os.listdir(BASE_DIR)
-                  if f.startswith("graph.json.bak_") and "_auto" in f)
-
-
-def _backup_graph(tag="auto"):
-    """Копия текущего graph.json рядом с ним. Молча: бэкап не должен ломать сохранение."""
-    try:
-        if not os.path.exists(GRAPH_FILE):
-            return ""
-        import shutil
-        name = "graph.json.bak_%s_%s" % (time.strftime("%Y-%m-%d_%H%M%S"), tag)
-        dst = os.path.join(BASE_DIR, name)
-        if os.path.exists(dst):                      # одна секунда — одна копия
-            return name
-        shutil.copy2(GRAPH_FILE, dst)
-        for old in _graph_backups()[:-GRAPH_BACKUP_KEEP]:
-            try:
-                os.remove(os.path.join(BASE_DIR, old))
-            except OSError:
-                pass
-        return name
-    except Exception as e:
-        print("[граф] не смог сделать резервную копию:", e)
-        return ""
-
 
 def _write_graph(data, force=False, tag="auto"):
     """Единственная точка записи графа. Возвращает (ok, ошибка).
 
     force=True — явное действие пользователя (сохранить/восстановить): пишем что бы там ни
-    было, но копию прежнего графа всё равно держим.
+    было. tag оставлен для совместимости вызовов (раньше попадал в имена копий).
     """
     try:
         new_n = _graph_node_count(data)
@@ -564,17 +539,9 @@ def _write_graph(data, force=False, tag="auto"):
             except Exception:
                 old_n = 0                            # файл повреждён — пустой граф не защищаем
             if old_n >= GRAPH_SHRINK_MIN and new_n < int(old_n * GRAPH_SHRINK_RATIO):
-                _backup_graph("before_shrink")       # повреждённый вариант тоже сохраняем
                 print("[граф] сохранение отклонено: карточек %d вместо %d" % (new_n, old_n))
                 return False, ("карточек стало %d вместо %d — сохранение отклонено, "
-                               "прежний граф отложен в резервную копию" % (new_n, old_n))
-        # Страховка: не чаще одной копии в минуту (ручное сохранение — всегда).
-        # Таймер двигаем ТОЛЬКО когда копия реально сделана: первое сохранение (графа ещё
-        # не было) копии не делает — и следующее должно скопировать уже настоящий граф.
-        global _last_graph_backup
-        if force or time.time() - _last_graph_backup[0] >= 60:
-            if _backup_graph(tag):
-                _last_graph_backup[0] = time.time()
+                               "в файле остался прежний граф" % (new_n, old_n))
         tmp = GRAPH_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -988,8 +955,9 @@ def phone_prompt_seen():
 
 
 # --- Резервная копия графа (кнопка-значок в сайдбаре, 04.10.26) ----------------------------
-# Раньше копию делал только MCP-сервер перед записью. Теперь её можно сделать и вручную из
-# приложения: рядом с graph.json кладём graph.json.bak_<дата>_<время>_manual и держим 20 свежих.
+# Раньше копию делал только MCP-сервер перед записью; с 10.10.26 автокопии при записи
+# отключены — эта кнопка (и команда backup_graph в Hermes) — единственный источник копий.
+# Рядом с graph.json кладём graph.json.bak_<дата>_<время>_manual и держим 20 свежих.
 BACKUP_KEEP = 20
 
 
@@ -1549,6 +1517,293 @@ def _api_guard():
     if request.headers.get("X-Plannertate-Client") != "1":
         return jsonify({"status": "error", "error": "нет заголовка клиента"}), 403
     return None
+
+
+# --- Живой звук компьютера на телефон (10.10.26, просьба Ярослава) ----------------------------
+# Кнопка в приложении телефона открывает поток: сервер захватывает ВЕСЬ звук Windows
+# (WASAPI loopback — что играет на колонках) и отдаёт его PCM-блоками, телефон играет их.
+#
+# Как устроено (переделано 10.10.26 после разбора зависаний):
+#   • Захват живёт в ОДНОМ фоновом потоке-«насосе» на весь сервер и открывается лениво —
+#     при первом включении кнопки. Когда на компьютере тишина, Windows не отдаёт из loopback
+#     ни кадра, и насос спокойно ждёт внутри read(); ждёт только он, а не соединения.
+#   • Каждый слушатель берёт звук из своей очереди. Если звука нет дольше 0,35 с, слушатель
+#     подмешивает цифровую тишину ТЕМ ЖЕ темпом (блок за ~100 мс), поэтому поток для телефона
+#     не замирает: обрыв связи замечается за доли секунды, и потоки не копятся. Раньше при
+#     тишине read() стоял намертво — отсюда зависшие соединения и MemoryError в логах.
+#   • Новый слушатель вытесняет прежнего (телефон один): у прежнего меняется seq, и его
+#     генератор сам завершается. Насос при этом не перезапускается.
+#   • Режим живёт строго по кнопке (10.10.26): насос стартует при первом подключении и САМ
+#     останавливается, если слушателей нет дольше _AUDIO_IDLE_SECONDS — освобождает
+#     устройство и перестаёт тратить процессор. Новое нажатие кнопки снова запускает насос
+#     (в пределах грейса — «тёплый» старт, звук сразу; после — холодный, на доли секунды).
+#   • Громкость ПК не «запекается» в поток: мастер-громкость устройства вывода читается
+#     через COM (IAudioEndpointVolume) и блок домножается до уровня «как при 100%».
+#     Измерено на этом ПК 10.10.26: уровень захвата ~ vol^1.745 (при 30% он в ~8 раз тише
+#     полного; линейной была бы просто 0.3). Громкость регулируется на телефоне.
+#   • Если pyaudiowpatch в сборке нет — вернём 501, приложение вежливо сообщит.
+_AUDIO_LOCK = threading.Lock()
+_AUDIO_STATE = {"seq": 0, "queue": None, "pump": False, "thread": None,
+                "listeners": 0, "last_active": 0.0}
+_AUDIO_CHUNK = 4800                     # кадров = 100 мс при 48 кГц стерео 16-bit
+_AUDIO_SILENCE = b"\x00" * (_AUDIO_CHUNK * 4)   # кадры × 2 канала × 2 байта
+_AUDIO_IDLE_SECONDS = 15.0              # столько ждём после отключения телефона — потом стоп
+
+# --- Компенсация громкости (см. пояснение выше) ------------------------------------------------
+_AUDIO_VOL = {"v": 1.0}                 # последняя известная мастер-громкость (0..1)
+_AUDIO_VOL_CURVE = 1.745                # кривая устройства: захват ~ v^1.745 (измерено)
+_AUDIO_VOL_MAX_GAIN = 40.0              # поправка не больше ×40 (ниже ~14% — плавный край)
+_ole32 = ctypes.windll.ole32
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
+                ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
+
+
+def _guid(text):
+    g = _GUID()
+    _ole32.CLSIDFromString(ctypes.c_wchar_p(text), ctypes.byref(g))
+    return g
+
+
+_CLSID_MMDE = _guid("{BCDE0395-E52F-467C-8E3D-C4579291692E}")   # MMDeviceEnumerator
+_IID_MMDE = _guid("{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+_IID_AEV = _guid("{5CDF2C82-841E-4546-9722-0CF74078229A}")     # IAudioEndpointVolume
+
+
+def _com_fn(ptr, index, restype, *args):
+    vt = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+    return ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *args)(vt[index])
+
+
+def _com_rel(ptr):
+    try:
+        _com_fn(ptr, 2, ctypes.c_ulong)(ptr)
+    except Exception:
+        pass
+
+
+def _endpoint_volume():
+    """Мастер-громкость активного устройства вывода (0..1) или None при любой осечке."""
+    de = ctypes.c_void_p()
+    if _ole32.CoCreateInstance(ctypes.byref(_CLSID_MMDE), None, 1,
+                               ctypes.byref(_IID_MMDE), ctypes.byref(de)) != 0:
+        return None
+    try:
+        dev = ctypes.c_void_p()
+        hr = _com_fn(de, 4, ctypes.c_long, ctypes.c_uint32, ctypes.c_uint32,
+                     ctypes.POINTER(ctypes.c_void_p))(de, 0, 0, ctypes.byref(dev))
+        if hr != 0:
+            return None
+        try:
+            aev = ctypes.c_void_p()
+            hr = _com_fn(dev, 3, ctypes.c_long, ctypes.POINTER(_GUID), ctypes.c_uint32,
+                         ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))(
+                dev, ctypes.byref(_IID_AEV), 23, None, ctypes.byref(aev))
+            if hr != 0:
+                return None
+            try:
+                v = ctypes.c_float()
+                hr = _com_fn(aev, 9, ctypes.c_long, ctypes.POINTER(ctypes.c_float))(
+                    aev, ctypes.byref(v))
+                if hr != 0:
+                    return None
+                return float(v.value)
+            finally:
+                _com_rel(aev)
+        finally:
+            _com_rel(dev)
+    finally:
+        _com_rel(de)
+
+
+def _pcm16_scaled(data, gain, is_float):
+    """Блок захвата → PCM16 с множителем gain (зажим по краям; из float32 — точнее)."""
+    import array
+    n = _AUDIO_CHUNK * 2                       # кадры × 2 канала
+    src = array.array("f" if is_float else "h")
+    src.frombytes(data)
+    if len(src) < n:
+        n = len(src)
+    out = array.array("h", bytes(_AUDIO_CHUNK * 4))
+    k = gain * (32767.0 if is_float else 1.0)
+    for i in range(n):
+        v = src[i] * k
+        if v > 32767.0:
+            v = 32767.0
+        elif v < -32768.0:
+            v = -32768.0
+        out[i] = int(v)
+    return out.tobytes()
+
+
+def _audio_pump():
+    """Один на всё приложение: читает loopback и складывает блоки в очередь слушателя.
+    При сбое устройства закрывает поток и пробует открыть заново (с паузой, чтобы
+    не крутиться вхолостую)."""
+    import pyaudiowpatch as pa
+    try:
+        _ole32.CoInitializeEx(None, 0)      # COM в этом потоке: чтение громкости
+    except Exception:
+        pass
+    p = None
+    st = None
+    is_float = False
+    fails = 0
+    while True:
+        try:
+            if st is None:
+                if p is None:
+                    p = pa.PyAudio()
+                try:
+                    dev = p.get_default_wasapi_loopback()
+                except Exception:
+                    dev = None
+                if dev is None:             # нет loopback-устройства — берём любой вход
+                    ins = [p.get_device_info_by_index(i) for i in range(p.get_device_count())
+                           if p.get_device_info_by_index(i).get("maxInputChannels")]
+                    if not ins:
+                        raise RuntimeError("нет устройств записи")
+                    dev = ins[0]
+                rate = int(dev["defaultSampleRate"])
+                try:
+                    st = p.open(format=pa.paFloat32, channels=2, rate=rate,
+                                input=True, input_device_index=dev["index"],
+                                frames_per_buffer=_AUDIO_CHUNK)
+                    is_float = True         # float32: компенсация громкости без потерь
+                except Exception:
+                    st = p.open(format=pa.paInt16, channels=2, rate=rate,
+                                input=True, input_device_index=dev["index"],
+                                frames_per_buffer=_AUDIO_CHUNK)
+                    is_float = False
+            data = st.read(_AUDIO_CHUNK, exception_on_overflow=False)
+            # если слушателей нет дольше грейса — гасим режим (решение и флаг атомарно)
+            with _AUDIO_LOCK:
+                was_idle = (_AUDIO_STATE["listeners"] <= 0 and
+                            time.monotonic() - _AUDIO_STATE["last_active"] > _AUDIO_IDLE_SECONDS)
+                if was_idle:
+                    _AUDIO_STATE["pump"] = False
+            if was_idle:
+                try:
+                    st.stop_stream()
+                    st.close()
+                except Exception:
+                    pass
+                try:
+                    p.terminate()           # освобождаем устройство — новый старт будет с нуля
+                except Exception:
+                    pass
+                return
+            # громкость ПК не должна влиять: домножаем блок до уровня «как при 100%»
+            vol = _endpoint_volume()
+            if vol is not None and vol > 0.001:
+                _AUDIO_VOL["v"] = vol
+            cur = _AUDIO_VOL["v"]
+            gain = (cur ** -_AUDIO_VOL_CURVE) if cur > 0 else 1.0
+            if gain < 1.0:
+                gain = 1.0
+            elif gain > _AUDIO_VOL_MAX_GAIN:
+                gain = _AUDIO_VOL_MAX_GAIN
+            if is_float or gain > 1.001:
+                data = _pcm16_scaled(data, gain, is_float)
+            fails = 0
+            with _AUDIO_LOCK:
+                q = _AUDIO_STATE["queue"]
+            if q is not None:
+                try:
+                    q.put_nowait(data)
+                except queue.Full:
+                    try:
+                        q.get_nowait()      # слушатель не успевает — роняем самый старый блок
+                    except queue.Empty:
+                        pass
+                    try:
+                        q.put_nowait(data)
+                    except queue.Full:
+                        pass
+        except Exception:
+            fails += 1
+            try:
+                if st is not None:
+                    st.stop_stream()
+                    st.close()
+            except Exception:
+                pass
+            st = None
+            if fails >= 3:
+                if p is not None:
+                    try:
+                        p.terminate()       # устройство заупрямилось — начнём с нуля
+                    except Exception:
+                        pass
+                    p = None
+                fails = 0
+            time.sleep(2.0 if fails == 0 else 0.5)
+
+
+def _audio_listener(q, my):
+    """Блоки для HTTP-ответа: живой звук из очереди; в тишине — цифровая тишина тем же
+    темпом (~100 мс блок), чтобы поток не замирал (см. пояснение выше)."""
+    last_rx = time.monotonic()
+    next_silence = last_rx + 0.35           # когда звука нет — по каким часам подмешивать тишину
+    try:
+        while True:
+            with _AUDIO_LOCK:
+                if _AUDIO_STATE["seq"] != my:
+                    return                      # подключился другой — завершаемся
+            now = time.monotonic()
+            if now - last_rx >= 0.35:           # система молчит — тишина ровно по часам
+                if now >= next_silence:
+                    if now - next_silence > 1.0:
+                        next_silence = now      # сильно отстали — не догоняем пачкой
+                    next_silence += 0.1
+                    yield _AUDIO_SILENCE
+                    continue
+                wait = next_silence - now
+            else:
+                wait = 0.05
+            try:
+                chunk = q.get(timeout=wait)
+            except queue.Empty:
+                chunk = None
+            if chunk is not None:
+                last_rx = time.monotonic()
+                next_silence = last_rx + 0.35
+                yield chunk
+    finally:
+        # слушатель ушёл: отмечаем время — насос сам остановится через грейс, если никого
+        with _AUDIO_LOCK:
+            _AUDIO_STATE["listeners"] = max(0, _AUDIO_STATE["listeners"] - 1)
+            _AUDIO_STATE["last_active"] = time.monotonic()
+            if _AUDIO_STATE["queue"] is q:
+                _AUDIO_STATE["queue"] = None
+
+
+@app.route("/api/audio/stream")
+def api_audio_stream():
+    """Живой слушатель звука компьютера: новый подключившийся вытесняет прежнего."""
+    try:
+        import pyaudiowpatch  # noqa: F401  (в собранном exe должен быть в hiddenimports)
+    except Exception:
+        return jsonify({"status": "error", "error": "нет захвата звука (pyaudiowpatch)"}), 501
+    q = queue.Queue(maxsize=10)                 # окно ~1 секунда звука
+    with _AUDIO_LOCK:
+        _AUDIO_STATE["seq"] += 1
+        my = _AUDIO_STATE["seq"]
+        _AUDIO_STATE["queue"] = q
+        _AUDIO_STATE["listeners"] += 1
+        _AUDIO_STATE["last_active"] = time.monotonic()
+        th = _AUDIO_STATE["thread"]
+        need_pump = (not _AUDIO_STATE["pump"]) or (th is not None and not th.is_alive())
+        if need_pump:
+            _AUDIO_STATE["pump"] = True
+            th = threading.Thread(target=_audio_pump, name="ptt-audio-pump", daemon=True)
+            _AUDIO_STATE["thread"] = th
+    if need_pump:
+        th.start()
+    return Response(_audio_listener(q, my), mimetype="audio/L16;rate=48000;channels=2",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.route("/api/pick_file", methods=["POST"])

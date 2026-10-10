@@ -78,6 +78,21 @@ function wordWidth(ctx, word) {
   }
   return w
 }
+
+// Ширина самого ДЛИННОГО слова при текущем шрифте ctx. Нужна, чтобы кегль названия
+// уменьшался и по ШИРИНЕ: wrapText переносит только по пробелам, а длинное слово
+// («Вайбкодинг», время «15:00» на узкой карточке) иначе вылезало за края (Ярослав 10.10.26).
+function widestWord(ctx, text) {
+  let w = 0
+  for (const para of String(text || '').split('\n')) {
+    for (const word of para.split(' ')) {
+      if (!word) continue
+      const ww = wordWidth(ctx, word)
+      if (ww > w) w = ww
+    }
+  }
+  return w
+}
 function wrapTextLimited(ctx, text, maxW, maxLines) {
   const lines = []
   const sp = wordWidth(ctx, ' ')
@@ -120,6 +135,9 @@ const IS_PHONE = (() => {
 const zoomDetail = () => (IS_PHONE ? ZOOM_DETAIL_PHONE : ZOOM_DETAIL_DESKTOP)
 const ZOOM_TITLE_MAX = 26   // крупное название на среднем плане: диапазон подбора кегля
 const ZOOM_TITLE_MIN = 10
+// Ниже этого кегля название не мельчим даже ради ширины: нечитаемо — тогда строка
+// честно обрезается многоточием (fitText). Просьба Ярослава 10.10.26.
+const ZOOM_TITLE_FIT_MIN = 7
 const MIN_DESC_SIZE = 2.6   // мельче описание не читается даже вблизи
 
 // --- Активное окно: рабочая область холста, ограниченная рамкой -----------------
@@ -462,6 +480,14 @@ class RectNode extends LGraphNode {
     this.size = keep
     this.hideSlotDots()
     return output
+  }
+  // Минимум РЕСАЙЗА: LiteGraph при перетаскивании уголка берёт минимум из computeSize().
+  // У обычной карточки он статический — RectNode.size = [100, 28] (ниже по файлу).
+  // У карточки-напоминания (kind 'notify') минимальная ШИРИНА меньше — 56; высота та же
+  // (просьба Ярослава 10.10.26). Увеличивать можно как и раньше, без ограничений.
+  computeSize(out) {
+    if ((this.kind || 'task') === 'notify') return [56, 28]
+    return super.computeSize(out)
   }
   // Несколько карточек на один вход: при подключении к уже занятому слоту создаём новый пустой.
   onBeforeConnectInput(target_slot) {
@@ -881,26 +907,38 @@ class RectNode extends LGraphNode {
     if (viewScale < zoomDetail() || isRem) {   // напоминание всегда рисуем «крупно по центру»
       // СРЕДНИЙ/ДАЛЬНИЙ ПЛАН: название крупно, во всю карточку; описание не показываем.
       // Берём максимальный кегль из диапазона, при котором строки ещё влезают.
+      const txtW = w - 14 - bellPad
       let size = ZOOM_TITLE_MAX, lines = [], lineHeight = 0
       for (; size >= ZOOM_TITLE_MIN; size -= 1) {
         setTitleFont(size)
-        lines = wrapText(ctx, raw, w - 14 - bellPad)
+        lines = wrapText(ctx, raw, txtW)
         lineHeight = Math.round(size * 1.12)
         if (lines.length * lineHeight <= availH - 2) break
+      }
+      // Второй проход — по ШИРИНЕ (просьба Ярослава 10.10.26): если слово шире полосы,
+      // мельчим дальше (до ZOOM_TITLE_FIT_MIN), чтобы текст не вылезал за края карточки.
+      for (let guard = 0; guard < 25 && size > ZOOM_TITLE_FIT_MIN && widestWord(ctx, raw) > txtW; guard++) {
+        size -= 1
+        setTitleFont(size)
+        lines = wrapText(ctx, raw, txtW)
+        lineHeight = Math.round(size * 1.12)
       }
       if (lines.length * lineHeight > availH - 2) {   // совсем длинное имя — режем строки
         if (size < ZOOM_TITLE_MIN) {                  // цикл дошёл до минимума, не уложившись
           size = ZOOM_TITLE_MIN
           setTitleFont(size)
-          lines = wrapText(ctx, raw, w - 14 - bellPad)
+          lines = wrapText(ctx, raw, txtW)
           lineHeight = Math.round(size * 1.12)
         }
         const keep = Math.max(1, Math.floor((availH - 2) / lineHeight))
         const rest = lines.slice(keep - 1).join(' ')
         lines = lines.slice(0, keep - 1)
-        lines.push(fitText(ctx, rest, w - 14 - bellPad))
+        lines.push(fitText(ctx, rest, txtW))
       }
       setTitleFont(size)
+      // Страховка: если даже минимальным кеглем строка шире полосы — обрезаем многоточием,
+      // за края карточки не вылезаем никогда.
+      lines = lines.map(line => (ctx.measureText(line).width > txtW ? fitText(ctx, line, txtW) : line))
       // Название — по центру КАРТОЧКИ, а не области без нижней строки (просьба Ярослава
       // 01.10.26): статус и срок на центровку не влияют. Ограничение одно — блок не должен
       // зайти в полосу нижней строки, иначе последняя строка ляжет на статус/срок.
@@ -919,14 +957,23 @@ class RectNode extends LGraphNode {
     } else {
       // БЛИЖНИЙ ПЛАН: название — в шапке сверху (как у обычной карточки).
       const top = 3
+      const txtN = w - 24 - bellPad
       let fontSize = t.titleSize, lineHeight = t.titleLine
       setTitleFont(fontSize)
-      let lines = wrapText(ctx, raw, w - 24 - bellPad)
+      let lines = wrapText(ctx, raw, txtN)
       if (lines.length * lineHeight > availH - 2) {   // очень длинное имя — чуть мельче
         fontSize = Math.max(9, t.titleSize - 2)
         lineHeight = Math.max(11, t.titleLine - 2)
         setTitleFont(fontSize)
-        lines = wrapText(ctx, raw, w - 24 - bellPad)
+        lines = wrapText(ctx, raw, txtN)
+      }
+      // Ширина (просьба Ярослава 10.10.26): длинное слово не должно вылезать за края —
+      // мельчим кегль до ZOOM_TITLE_FIT_MIN.
+      for (let guard = 0; guard < 25 && fontSize > ZOOM_TITLE_FIT_MIN && widestWord(ctx, raw) > txtN; guard++) {
+        fontSize -= 1
+        lineHeight = Math.max(8, lineHeight - 1)
+        setTitleFont(fontSize)
+        lines = wrapText(ctx, raw, txtN)
       }
       // Шапка не должна съесть всю карточку: если есть описание — отдаём под неё не больше
       // половины высоты, а слишком длинное имя режем многоточием (иначе описание вылезало).
@@ -935,9 +982,11 @@ class RectNode extends LGraphNode {
         const keep = Math.max(1, Math.floor(titleMax / lineHeight))
         const rest = lines.slice(keep - 1).join(' ')
         lines = lines.slice(0, keep - 1)
-        lines.push(fitText(ctx, rest, w - 24 - bellPad))
+        lines.push(fitText(ctx, rest, txtN))
         setTitleFont(fontSize)
       }
+      // Страховка: строка шире полосы — обрезаем многоточием, за края не вылезаем.
+      lines = lines.map(line => (ctx.measureText(line).width > txtN ? fitText(ctx, line, txtN) : line))
       let y = top + lineHeight / 2
       for (const line of lines) {
         ctx.fillText(line, titleCx, y)
@@ -1125,6 +1174,8 @@ class RectNode extends LGraphNode {
 // поэтому минимум ресайза задаётся этой парой, а увеличивать по-прежнему можно сколько угодно.
 // 01.10.26 (просьба Ярослава): минимальная ВЫСОТА уменьшена вдвое — 56 -> 28. Минимальная
 // ширина осталась 100. Размер СОЗДАНИЯ новой карточки не меняется (см. this.size в конструкторе).
+// 10.10.26 (просьба Ярослава): у карточки-напоминания минимум по ШИРИНЕ — 56 (см. computeSize()
+// у RectNode); у задач минимум прежний. Минимальная высота — как и была, 28.
 RectNode.size = [100, 28]
 // Низ значка ⏰ на карточке-напоминании: время центрируется в свободной полосе ПОД ним
 // (значок сверху по центру, просьба Ярослава 01.10.26), а не в середине всей карточки.

@@ -23,6 +23,7 @@ a = Analysis(
     hiddenimports=[
         'tkinter', 'tkinter.filedialog', 'tkinter.commondialog',   # pick_file.py подключается вручную
         'PyQt5.sip', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWidgets',
+        'pyaudiowpatch', '_pyaudiowpatch',   # живой звук компьютера на телефон (10.10.26)
     ],
     hookspath=[],
     hooksconfig={},
