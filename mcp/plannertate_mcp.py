@@ -399,6 +399,7 @@ def add_reminder(task: str, when: str = "", time: str = "09:00", repeat: str = "
     n["remindTime"] = time
     n["repeatMode"] = _norm_repeat(repeat)
     n["channels"] = _norm_channels(channels)
+    n["autoFit"] = 1   # ширина станет минимальной по умолчанию при загрузке графа (Ярослав 12.10.26)
     note = _save(g, "mcp_reminder")
     return f"Карточка #{n['id']} «{n['title']}» теперь напоминание: {n.get('due') or 'без даты'} в {time}, повтор {n['repeatMode']}, каналы {', '.join(n['channels'])}. {note}"
 

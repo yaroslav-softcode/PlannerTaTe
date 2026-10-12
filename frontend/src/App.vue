@@ -809,10 +809,13 @@ class RectNode extends LGraphNode {
     const titleCx = w / 2
     const loc = (lang && lang.value) === 'en' ? 'en' : 'ru'
     // Карточка-напоминания (kind 'notify') вместо названия показывает ЧТО и КОГДА прозвучит:
-    // в слоте названия — время, в нижней строке СЛЕВА — повторение («ежедневно», «еженедельно»),
-    // СПРАВА — дата, как у задачи (Ярослав 01.10.26).
+    // в слоте названия — время, в нижней строке СЛЕВА — ЗНАЧОК повторения (12.10.26, вместо
+    // слов; эталон repeat-icons-final-11.html), СПРАВА — дата, как у задачи (Ярослав 01.10.26).
     const isRem = this.kind === 'notify'
     const statusText = isRem ? this.repeatLabel() : (STATUS_SHORT[loc][this.status] || '')
+    // Сторона плашки-значка ≈ кегль подписей (как значок вложения). Слово остаётся в тултипе
+    // и в панели напоминания (ReminderPanel — решение не менять).
+    const repIcon = isRem ? Math.round(t.statusSize) : 0
     const dueText = this.due ? shortDate(this.due) : ''   // у напоминания здесь дата срока
     // Описание: переносы строк, которые поставил пользователь, сохраняем (схлопываем
     // только пробелы внутри строки) — тогда карточка повторяет то, что видно в поле.
@@ -854,23 +857,26 @@ class RectNode extends LGraphNode {
       const availW = w - footerPad * 2
       const GAP = 5, MIN_STATUS = 14
       let stNat = 0, duNat = 0
-      if (statusText) { ctx.font = `${t.statusWeight} ${t.statusSize}px ${t.statusFamily}`; stNat = ctx.measureText(statusText).width }
+      if (isRem) stNat = repIcon   // вместо слова повторения — плашка фиксированной стороны
+      else if (statusText) { ctx.font = `${t.statusWeight} ${t.statusSize}px ${t.statusFamily}`; stNat = ctx.measureText(statusText).width }
       if (dueText) { ctx.font = `${t.statusSize}px ${t.statusFamily}`; duNat = ctx.measureText(dueText).width }
-      let duLim = maxSide, stLim = maxSide
+      // Напоминанию (isRem) дата даётся ВСЁ место слева ДО САМОГО значка повторения
+      // (Ярослав 12.10.26): значок — маленькая плашка фиксированной стороны, слово-повтор
+      // больше половину строки не занимает. Для задач — как было: подписи делят ширину пополам.
+      let duLim = isRem ? Math.max(16, availW - stNat - GAP) : maxSide, stLim = maxSide
       if (badges.length) {
         // Значки занимают полосу ТОЙ подписи, которой нет: нет даты — берут и её место
         // (просьба Ярослава 03.10.26), поэтому под отсутствующую подпись ничего не резервируем.
-        duLim = dueText ? Math.max(16, Math.min(duNat, availW - badgeZone - GAP)) : 0
+        // У напоминания в этой полосе ещё и плашка повторения слева — отнимаем и её.
+        duLim = dueText ? Math.max(16, Math.min(duNat, availW - badgeZone - GAP - (isRem ? stNat + GAP : 0))) : 0
         // Статусу — остаток; мало места, значит значки его вытеснили.
         const rest = availW - (duLim ? duLim + GAP : 0) - badgeZone
         stLim = stNat ? (rest >= MIN_STATUS ? Math.min(stNat, rest) : 0) : 0
       }
-      if (statusText && stLim > 0) {
-        // У напоминания слева стоит повторение — оно длиннее даты («по будням», «ежемесячно»),
-        // поэтому левой подписи отдаём всё место до даты, а не половину карточки: граница
-        // сдвинута вправо, иначе слова обрезались многоточием (просьба Ярослава 01.10.26).
+      if (!isRem && statusText && stLim > 0) {
+        // Слово повторения с 12.10.26 на карточке НЕ рисуется — вместо него значок
+        // (drawRepeatIcon), поэтому ветка isRem сюда не заходит. Для задач — как было.
         let leftLim = stLim
-        if (isRem && dueText) leftLim = Math.max(24, availW - duNat - 6)
         statusShown = fitText(ctx, t.titleUp ? statusText.toUpperCase() : statusText, leftLim)
         const mSt = ctx.measureText(statusShown)
         if (mSt.actualBoundingBoxAscent > 0) footerAsc = mSt.actualBoundingBoxAscent
@@ -1063,6 +1069,19 @@ class RectNode extends LGraphNode {
         ctx.textAlign = 'left'
         ctx.fillText(statusShown, footerPad, footerBaseline)
       }
+      if (isRem) {
+        // Значок повторения СЛЕВА в нижней строке (вместо слова, kanban t_32eb0b33).
+        // Вырезки — тем же градиентом, что тело карточки (onDrawBackground), поэтому
+        // прорезь не «пятно», а реальное окно в фон. Чернила плашки — t.titleColor:
+        // в светлых темах он тёмный, в тёмных светлый (требование Ярослава).
+        const accR = accentOf(this.color)
+        const gR = ctx.createLinearGradient(0, 0, 0, h)
+        gR.addColorStop(0, t.fillTop(accR))
+        gR.addColorStop(1, t.fillBot(accR))
+        const cyR = footerBaseline - (footerAsc - footerDesc) / 2
+        drawRepeatIcon(ctx, REPEAT_ICON_MODES.includes(this.repeatMode) ? this.repeatMode : 'once',
+                       footerPad + repIcon / 2, cyR, repIcon, t.titleColor, gR)
+      }
       if (dueShown) {
         ctx.font = `${t.statusSize}px ${t.statusFamily}`
         ctx.fillStyle = t.dueColor
@@ -1076,7 +1095,7 @@ class RectNode extends LGraphNode {
         // Размеры (badgeS/badgeW) посчитаны выше — вместе с полосой, которую мы уже отняли
         // у подписей. Здесь выбираем место: ряд значков по центру свободного коридора.
         ctx.font = `${t.statusWeight} ${t.statusSize}px ${t.statusFamily}`
-        const stW = statusShown ? ctx.measureText(statusShown).width : 0
+        const stW = statusShown ? ctx.measureText(statusShown).width : (isRem ? repIcon : 0)
         ctx.font = `${t.statusSize}px ${t.statusFamily}`
         const duW = dueShown ? ctx.measureText(dueShown).width : 0
         const gapL = footerPad + stW + (stW ? 4 : 0)
@@ -1366,7 +1385,8 @@ async function initCanvas() {
 
   // setTheme — для верификаторов из workspace/ (кликать по выпадающему списку
   // из Playwright неудобно: список нужно сначала раскрыть).
-  window.__plannertate = { graph, liteCanvas, field: FIELD, setTheme: (id) => { themeName.value = id } }
+  window.__plannertate = { graph, liteCanvas, field: FIELD, setTheme: (id) => { themeName.value = id },
+                           fitCardToTitle: (n) => fitCardToTitle(n) }
 
   // Применяем тему к холсту (фоновая сетка, стиль связей, радиус скругления).
   applyCanvasTheme(liteCanvas)
@@ -2292,6 +2312,74 @@ function localPathFromUri(s) {
 // Значок ссылки на карточке. Девять видов (просьба Ярослава 03.10.26): лист (обычный документ),
 // картинка, таблица, архив, презентация, код, программа, нота, плёнка. Рисуем ЛИНИЯМИ, а не
 // эмодзи: на кегле ≈8px эмодзи мутнеют, а в монохромных темах остаются цветными.
+// --- Значки повторения на карточке-напоминании (12.10.26, kanban t_32eb0b33) -------------
+// Утверждённый набор: «борд 2, вариант 11 + правки» — repeat-icons-final-11.html.
+// Это ЗАЛИТОЙ скруглённый квадрат (viewBox 24×24, rect 3,3,18,18 rx 5.5) с «вырезками»
+// цвета фона карточки: once — «1», daily — солнце (круг r=3 + 8 лучей), weekly — «7»,
+// weekdays — портфель, monthly — луна-серп. Квадрат — чернильным цветом темы (в светлых
+// темах t.titleColor тёмный, в тёмных — светлый), вырезки — тот же градиент, что и тело
+// карточки, поэтому прорезь буквально «дышит» фоном. Рисуется по той же схеме, что и
+// drawFileBadge (доли от стороны значка, одна система координат).
+const REPEAT_ICON_MODES = ['once', 'daily', 'weekly', 'weekdays', 'monthly']
+function drawRepeatIcon(ctx, mode, cx, cy, s, ink, cut) {
+  const x = cx - s / 2, y = cy - s / 2
+  const X = (v) => x + s * v / 24
+  const Y = (v) => y + s * v / 24
+  ctx.save()
+  // Квадрат-плашка: чернильный цвет темы.
+  ctx.fillStyle = ink
+  roundRect(ctx, X(3), Y(3), s * 18 / 24, s * 18 / 24, s * 5.5 / 24)
+  ctx.fill()
+  // Всё рисуемое сверху — «вырезка» (цвет фона карточки).
+  ctx.fillStyle = cut
+  ctx.strokeStyle = cut
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  if (mode === 'daily') {
+    // Солнце: круг r=3 + 8 лучей (r+1.3..r+2.6, ширина 1.6, round caps) — как в эталоне.
+    ctx.beginPath(); ctx.arc(cx, cy, s * 3 / 24, 0, Math.PI * 2); ctx.fill()
+    ctx.lineWidth = s * 1.6 / 24
+    ctx.beginPath()
+    for (let a = 0; a < 360; a += 45) {
+      const rad = a * Math.PI / 180
+      ctx.moveTo(cx + (s * 4.3 / 24) * Math.cos(rad), cy + (s * 4.3 / 24) * Math.sin(rad))
+      ctx.lineTo(cx + (s * 5.6 / 24) * Math.cos(rad), cy + (s * 5.6 / 24) * Math.sin(rad))
+    }
+    ctx.stroke()
+  } else if (mode === 'weekdays') {
+    // Портфель: ручка-дуга (w1.7), корпус rect(6.6,9.4,10.8,8.6) rx1.6 обводкой,
+    // ремень — линия y=12.6 (w1.4), защёлка rect(11.1,11.9,1.8,1.6) — координаты эталона.
+    ctx.lineWidth = s * 1.7 / 24
+    ctx.beginPath()
+    ctx.moveTo(X(9.6), Y(9.4)); ctx.lineTo(X(9.6), Y(7.9))
+    ctx.arc(X(11.1), Y(7.9), s * 1.5 / 24, Math.PI, Math.PI * 1.5)
+    ctx.arc(X(12.9), Y(7.9), s * 1.5 / 24, Math.PI * 1.5, Math.PI * 2)
+    ctx.lineTo(X(14.4), Y(9.4))
+    ctx.stroke()
+    ctx.beginPath(); roundRect(ctx, X(6.6), Y(9.4), s * 10.8 / 24, s * 8.6 / 24, s * 1.6 / 24); ctx.stroke()
+    ctx.lineWidth = s * 1.4 / 24
+    ctx.beginPath(); ctx.moveTo(X(6.6), Y(12.6)); ctx.lineTo(X(17.4), Y(12.6)); ctx.stroke()
+    ctx.beginPath(); roundRect(ctx, X(11.1), Y(11.9), s * 1.8 / 24, s * 1.6 / 24, s * 0.5 / 24); ctx.fill()
+  } else if (mode === 'monthly') {
+    // Луна: серп из эталона (path M21 12.79A9 9...), transform как в HTML:
+    // translate(12 12) scale(.78) translate(-12 -12.5).
+    if (!drawRepeatIcon._moon) drawRepeatIcon._moon = new Path2D('M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z')
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.scale(0.78 * s / 24, 0.78 * s / 24)
+    ctx.translate(-12, -12.5)
+    ctx.fill(drawRepeatIcon._moon)
+    ctx.restore()
+  } else {
+    // once — «1», weekly — «7»: Arial 800, базовая линия y=17.5 в системе 24 (как в эталоне).
+    ctx.font = `800 ${Math.max(6, Math.round(s * 15 / 24))}px Arial`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillText(mode === 'weekly' ? '7' : '1', cx, y + s * 17.5 / 24)
+  }
+  ctx.restore()
+}
+
 // Цвет значка ссылки — по ТИПУ файла (03.10.26, просьба Ярослава: «линии, но цвет по типу файла,
 // в монотемах — серые»). Два набора: на светлой карточке нужен насыщенный тон, на тёмной — светлый,
 // иначе значок сливается с фоном. В монотемах (Чёрно-Белая, Мрамор) остаётся прежний цвет темы.
@@ -3038,9 +3126,17 @@ function addCardAtCenter(kind = 'task') {
       node.remindTime = defaultRemindTime()
       node.repeatMode = 'once'
       node.channels = ['pc', 'phone', 'tablet']
+      // Ширина сразу МИНИМАЛЬНАЯ по умолчанию (Ярослав 12.10.26): расчёт по времени и дате
+      // (название на карточке-напоминании не рисуется), пол 56 px — как у ресайза.
+      // _fitOnce=true на время расчёта — чтобы fitCardToTitle поставил точную ширину даже
+      // меньше текущих 100 px; дальше не ставим: правки только увеличивают.
+      node._fitOnce = true
+      fitCardToTitle(node)
+      node._fitOnce = false
+    } else {
+      // Новая карточка-задача: при первой правке подберём размер под название (см. fitCardToTitle).
+      node._fitOnce = true
     }
-    // Новая карточка: при первой правке подберём размер под название (см. fitCardToTitle).
-    node._fitOnce = true
   }
 }
 function onAddTask() { if (readOnly.value) return roBlocked(); addCardAtCenter('task') }
@@ -3144,6 +3240,20 @@ async function loadGraph() {
     // Файловые карточки от устройств сразу сжимаем до «максимально низкой» высоты (06.10.26):
     // название при этом остаётся целым — расчёт см. в fitFileCard.
     for (const n of graph._nodes || []) if (isDeviceFileCard(n)) fitFileCard(n)
+    // Напоминания, созданные автоматически (телефон/MCP — см. autoFit в backend._phone_card):
+    // ставим МИНИМАЛЬНУЮ ширину по умолчанию (Ярослав 12.10.26). Флаг одноразовый: снимаем
+    // сразу, чтобы ручные размеры пользователя больше никогда не перезаписывались.
+    let autoFitSeen = false
+    for (const n of graph._nodes || []) {
+      if (!n.autoFit) continue
+      delete n.autoFit
+      if ((n.kind || 'task') !== 'notify') continue
+      n._fitOnce = true
+      fitCardToTitle(n)
+      n._fitOnce = false
+      autoFitSeen = true
+    }
+    if (autoFitSeen) { graph.setDirtyCanvas(true, true); saveGraph(true) }   // фиксируем размеры
     return true
   } catch (e) { console.error(e); return false }
 }
@@ -3176,23 +3286,28 @@ function fitCardToTitle(node) {
     const keep = ctx.font
     ctx.font = `${t.titleWeight} ${t.titleSize}px ${t.titleFamily}`
     const timeW = ctx.measureText(node.reminderTimeText ? node.reminderTimeText() : '').width
-    // Повторение рисуется ТЕМ ЖЕ шрифтом, что и статус у задачи (с жирностью темы!),
-    // дата — обычным: иначе замер выходит меньше реального и подпись обрезается.
-    ctx.font = `${t.statusWeight} ${t.statusSize}px ${t.statusFamily}`
-    const repW = node.repeatLabel ? ctx.measureText(node.repeatLabel()).width : 0
+    // Повторение с 12.10.26 — ЗНАЧОК (плашка), а не слово: ширина = сторона плашки
+    // (≈ t.statusSize, как в отрисовке). Дата — обычным шрифтом: иначе замер выходит
+    // меньше реального и подпись обрезается.
+    const repW = t.statusSize
     ctx.font = `${t.statusSize}px ${t.statusFamily}`
     const dateW = node.due ? ctx.measureText(shortDate(node.due)).width : 0
     ctx.font = keep
-    // Нижняя строка рисуется по УГЛАМ: слева повторение, справа дата, и каждому углу достаётся
-    // половина ширины карточки минус поля (footerPad 6 + 2, как в отрисовке). Поэтому ширину
-    // считаем так, чтобы в половину влезла ЦЕЛИКОМ самая длинная из них, — иначе «ежедневно»
-    // превращалось в «ежедне…» (замер 01.10.26: нужно ≥ 2*(48+8) = 112 px).
-    // Нижняя строка идёт ОТ КРАЯ ДО КРАЯ: слева повторение, справа дата — значит карточке нужно
-    // вместить обе подписи разом (а не половину каждой): поля 6+6 и зазор 6 между ними.
+    // Нижняя строка идёт ОТ КРАЯ ДО КРАЯ: слева значок-плашка, справа дата (дата с 12.10.26
+    // дотянута до значка, см. отрисовку), — значит карточке нужно вместить оба разом:
+    // поля 6+6 и зазор 6 между ними.
     const need = repW + dateW + 18
-    const wWanted = Math.min(FIT_W_MAX, Math.max(FIT_W_MIN, Math.ceil(Math.max(timeW + 20, need))))
-    const cur = node.size || [FIT_W_MIN, 56]
-    const W = Math.max(cur[0], wWanted)
+    // Минимум ширины напоминания — 56 (тот же пол, что у ресайза в computeSize), а НЕ 100:
+    // слово-повтор ушло в маленький значок, и карточка перестала нуждаться в 100 px
+    // (Ярослав 12.10.26: новая или автоматически созданная карточка-напоминание должна
+    // быть минимальной ширины по умолчанию).
+    const REM_MIN_W = 56
+    const wWanted = Math.min(FIT_W_MAX, Math.max(REM_MIN_W, Math.ceil(Math.max(timeW + 20, need))))
+    const cur = node.size || [REM_MIN_W, 56]
+    // Свежесозданную карточку (_fitOnce) ставим В ТОЧНОСТИ по расчёту, даже уже текущих 100
+    // (дефолт RectNode.size) — иначе «минимальная ширина по умолчанию» не получится.
+    // Уже тронутую пользователем карточку — только увеличиваем (ручной ресайз не ломаем).
+    const W = node._fitOnce ? wWanted : Math.max(cur[0], wWanted)
     const H = Math.max(cur[1], 56)      // ниже 56 значок, время и нижняя строка не поместятся
     if (Math.abs(W - cur[0]) > 0.5 || Math.abs(H - cur[1]) > 0.5) {
       node.size = [Math.round(W), Math.round(H)]
@@ -3342,6 +3457,9 @@ function addNotifyFrom(src) {
   const child = createSubtask(toRaw(src), 0, 1)    // свободное место справа + связь с родителем
   if (!child) return null
   fillReminderDefaults(child, toRaw(src))
+  // Ширина сразу минимальная по умолчанию (Ярослав 12.10.26): _fitOnce на время расчёта,
+  // чтобы карточка встала точно по времени/дате, а не по наследным 100 px.
+  child._fitOnce = true
   fitCardToTitle(child)
   child._fitOnce = false
   if (liteCanvas) liteCanvas.setDirty(true, true)
