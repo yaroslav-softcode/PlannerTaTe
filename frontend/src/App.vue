@@ -486,7 +486,9 @@ class RectNode extends LGraphNode {
   // У карточки-напоминания (kind 'notify') минимальная ШИРИНА меньше — 56; высота та же
   // (просьба Ярослава 10.10.26). Увеличивать можно как и раньше, без ограничений.
   computeSize(out) {
-    if ((this.kind || 'task') === 'notify') return [56, 28]
+    // Пол высоты напоминания — 56, как у плиток «Смартфон»/«Планшет» (Ярослав 12.10.26):
+    // ниже значки, время и дата не помещаются.
+    if ((this.kind || 'task') === 'notify') return [56, 56]
     return super.computeSize(out)
   }
   // Несколько карточек на один вход: при подключении к уже занятому слоту создаём новый пустой.
@@ -815,7 +817,9 @@ class RectNode extends LGraphNode {
     const statusText = isRem ? this.repeatLabel() : (STATUS_SHORT[loc][this.status] || '')
     // Сторона плашки-значка ≈ кегль подписей (как значок вложения). Слово остаётся в тултипе
     // и в панели напоминания (ReminderPanel — решение не менять).
-    const repIcon = isRem ? Math.round(t.statusSize) : 0
+    // Ярослав 12.10.26: плашка повтора +20%, затем ещё +40% к кеглю подписей; с вечера 12.10.26
+    // плашка стоит В ЛЕВОМ ВЕРХНЕМ УГЛУ (нижняя строка целиком принадлежит дате).
+    const repIcon = isRem ? Math.round(t.statusSize * 1.68) : 0
     const dueText = this.due ? shortDate(this.due) : ''   // у напоминания здесь дата срока
     // Описание: переносы строк, которые поставил пользователь, сохраняем (схлопываем
     // только пробелы внутри строки) — тогда карточка повторяет то, что видно в поле.
@@ -857,13 +861,11 @@ class RectNode extends LGraphNode {
       const availW = w - footerPad * 2
       const GAP = 5, MIN_STATUS = 14
       let stNat = 0, duNat = 0
-      if (isRem) stNat = repIcon   // вместо слова повторения — плашка фиксированной стороны
-      else if (statusText) { ctx.font = `${t.statusWeight} ${t.statusSize}px ${t.statusFamily}`; stNat = ctx.measureText(statusText).width }
+      if (!isRem && statusText) { ctx.font = `${t.statusWeight} ${t.statusSize}px ${t.statusFamily}`; stNat = ctx.measureText(statusText).width }
       if (dueText) { ctx.font = `${t.statusSize}px ${t.statusFamily}`; duNat = ctx.measureText(dueText).width }
-      // Напоминанию (isRem) дата даётся ВСЁ место слева ДО САМОГО значка повторения
-      // (Ярослав 12.10.26): значок — маленькая плашка фиксированной стороны, слово-повтор
-      // больше половину строки не занимает. Для задач — как было: подписи делят ширину пополам.
-      let duLim = isRem ? Math.max(16, availW - stNat - GAP) : maxSide, stLim = maxSide
+      // С 12.10.26 (правка Ярослава) плашка повтора стоит В ЛЕВОМ ВЕРХНЕМ УГЛУ — нижняя строка
+      // целиком принадлежит дате: лимит ей — вся ширина строки (плашку снизу не резервируем).
+      let duLim = isRem ? availW : maxSide, stLim = maxSide
       if (badges.length) {
         // Значки занимают полосу ТОЙ подписи, которой нет: нет даты — берут и её место
         // (просьба Ярослава 03.10.26), поэтому под отсутствующую подпись ничего не резервируем.
@@ -894,8 +896,13 @@ class RectNode extends LGraphNode {
       ? Math.round(Math.max(footerAsc + footerDesc + footerBottomPad + 4, badgeS ? badgeS + 5 : 0))
       : 0
     const footerBaseline = h - footerBottomPad - footerDesc
-    // Высота, доступная названию и описанию (низ карточки отдаём под статус/срок).
-    const availH = Math.max(0, h - footerH)
+    // Вечер 12.10.26 (просьба Ярослава): у напоминания ВЕРХНЕЕ ПОЛЕ под плашку повтора и
+    // будильник — то же, что нижнее поле под дату. Плашка/будильник стоят от верха на 3 px,
+    // их низ = 3 + repIcon (плашка крупнее будильника), плюс тот же зазор 2 снизу.
+    const headerH = isRem ? 3 + repIcon + 2 : 0
+    // Высота, доступная названию и описанию (низ карточки отдаём под статус/срок,
+    // у напоминания и верх — под плашку с будильником).
+    const availH = Math.max(0, h - footerH - headerH)
     // Низ содержимого (шапка либо описание). Нижняя строка теперь у самой грани, но содержимое
     // всё равно не должно её задевать — эту полосу стерегут clamp'ы по footerH ниже.
     let contentBottom = 0
@@ -948,13 +955,13 @@ class RectNode extends LGraphNode {
       // Название — по центру КАРТОЧКИ, а не области без нижней строки (просьба Ярослава
       // 01.10.26): статус и срок на центровку не влияют. Ограничение одно — блок не должен
       // зайти в полосу нижней строки, иначе последняя строка ляжет на статус/срок.
+      // Напоминание (вечер 12.10.26): сверху своё поле под плашку и будильник (headerH),
+      // снизу — под дату (footerH); время центрируется ПОСЕРЕДИНЕ между этими полями.
       const blockH = lines.length * lineHeight
-      // У напоминания над временем стоит значок, поэтому центрируем в полосе ПОД ним
-      // (иначе значок сверху и время «слипались»), у задачи — как было, по центру карточки.
       const cy = isRem
-        ? Math.min(REM_ICON_BOTTOM + (h - footerH - REM_ICON_BOTTOM) / 2, h - footerH - blockH / 2)
+        ? Math.max(headerH + blockH / 2, Math.min((headerH + h - footerH) / 2, h - footerH - blockH / 2))
         : Math.min(h / 2, h - footerH - blockH / 2)
-      let y = Math.max(2, cy - blockH / 2) + lineHeight / 2
+      let y = Math.max(isRem ? headerH + 2 : 2, cy - blockH / 2) + lineHeight / 2
       for (const line of lines) {
         ctx.fillText(line, titleCx, y)
         y += lineHeight
@@ -1070,23 +1077,39 @@ class RectNode extends LGraphNode {
         ctx.fillText(statusShown, footerPad, footerBaseline)
       }
       if (isRem) {
-        // Значок повторения СЛЕВА в нижней строке (вместо слова, kanban t_32eb0b33).
+        // Плашка-значок повтора — В ЛЕВОМ ВЕРХНЕМ УГЛУ карточки (Ярослав 12.10.26 вечером:
+        // «перенеси значок снизу-слева наверх, а вся нижняя панель будет за датой»).
         // Вырезки — тем же градиентом, что тело карточки (onDrawBackground), поэтому
         // прорезь не «пятно», а реальное окно в фон. Чернила плашки — t.titleColor:
-        // в светлых темах он тёмный, в тёмных светлый (требование Ярослава).
+        // в светлых темах он тёмный, в тёмных светлый (требование Ярослава; единый вид
+        // «как в Неоне» для всех тем 12.10.26 отменён — была ошибка, откатили).
         const accR = accentOf(this.color)
-        const gR = ctx.createLinearGradient(0, 0, 0, h)
-        gR.addColorStop(0, t.fillTop(accR))
-        gR.addColorStop(1, t.fillBot(accR))
-        const cyR = footerBaseline - (footerAsc - footerDesc) / 2
+        let gR
+        if (REP_CUT_SOLID.has(theme().id)) {
+          // Ярослав 12.10.26: в полупрозрачных темах вырезка градиентом тела бледнеет на
+          // светлой плашке («1» еле видна). Берём ТОТ ЖЕ оттенок карточки, но плотный —
+          // чистый акцент темы без прозрачности.
+          gR = accR
+        } else {
+          gR = ctx.createLinearGradient(0, 0, 0, h)
+          gR.addColorStop(0, t.fillTop(accR))
+          gR.addColorStop(1, t.fillBot(accR))
+        }
         drawRepeatIcon(ctx, REPEAT_ICON_MODES.includes(this.repeatMode) ? this.repeatMode : 'once',
-                       footerPad + repIcon / 2, cyR, repIcon, t.titleColor, gR)
+                       footerPad + repIcon / 2, 3 + repIcon / 2, repIcon, t.titleColor, gR)
       }
       if (dueShown) {
         ctx.font = `${t.statusSize}px ${t.statusFamily}`
         ctx.fillStyle = t.dueColor
-        ctx.textAlign = 'right'
-        ctx.fillText(dueShown, w - footerPad, footerBaseline)
+        if (isRem) {
+          // Ярослав 12.10.26: нижняя строка напоминания целиком за датой — выравниваем её
+          // ПО ЦЕНТРУ строки (плашка повтора ушла в левый верхний угол, край слева свободен).
+          ctx.textAlign = 'center'
+          ctx.fillText(dueShown, w / 2, footerBaseline)
+        } else {
+          ctx.textAlign = 'right'
+          ctx.fillText(dueShown, w - footerPad, footerBaseline)
+        }
       }
       // Значок вложения — МЕЖДУ статусом и датой: ставим его в центр свободного промежутка
       // между ними, поэтому он никогда не наезжает на подписи. Не влез — не рисуем совсем
@@ -1095,7 +1118,9 @@ class RectNode extends LGraphNode {
         // Размеры (badgeS/badgeW) посчитаны выше — вместе с полосой, которую мы уже отняли
         // у подписей. Здесь выбираем место: ряд значков по центру свободного коридора.
         ctx.font = `${t.statusWeight} ${t.statusSize}px ${t.statusFamily}`
-        const stW = statusShown ? ctx.measureText(statusShown).width : (isRem ? repIcon : 0)
+        // Плашка повтора в ЛЕВОМ ВЕРХНЕМ УГЛУ — слева нижней строки ничего нет (у напоминаний
+        // вложений и так не бывает: ссылка на файл в напоминание запрещена).
+        const stW = statusShown ? ctx.measureText(statusShown).width : 0
         ctx.font = `${t.statusSize}px ${t.statusFamily}`
         const duW = dueShown ? ctx.measureText(dueShown).width : 0
         const gapL = footerPad + stW + (stW ? 4 : 0)
@@ -1126,16 +1151,21 @@ class RectNode extends LGraphNode {
 
     // Значок напоминания: будильник СВЕРХУ ПО ЦЕНТРУ карточки (Ярослав 01.10.26).
     // Рисуем последним по тексту, но до портов: ширина глифа ⏰ ~16.5 px в 12px.
+    // Вечер 12.10.26: будильник опущен — его НИЖНЯЯ грань на одном уровне с нижней гранью
+    // плашки повтора в левом верхнем углу (обе = 3 + repIcon; глиф ⏰ ≈12 px высотой).
+    // В монохромных темах (Чёрно-Белая, Мрамор) — наоборот ПОДНЯТ: верх будильника на одном
+    // уровне с верхом плашки (оба от верха карточки на 3, просьба Ярослава 12.10.26).
     if (this.kind === 'notify') {
+      const bellTop = theme().mono ? 3 : 3 + repIcon - 12
       ctx.save()
       if (theme().mono) {
         // В монохромной теме эмодзи ⏰ остаётся цветным при любом шрифте — рисуем будильник линиями.
-        drawBellMono(ctx, w / 2, 3, 12, t.titleColor)
+        drawBellMono(ctx, w / 2, bellTop, 12, t.titleColor)
       } else {
         ctx.font = '12px "Segoe UI Emoji", "Noto Color Emoji", sans-serif'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'top'
-        ctx.fillText('⏰', w / 2, 3)
+        ctx.fillText('⏰', w / 2, bellTop)
       }
       ctx.restore()
     }
@@ -1196,9 +1226,6 @@ class RectNode extends LGraphNode {
 // 10.10.26 (просьба Ярослава): у карточки-напоминания минимум по ШИРИНЕ — 56 (см. computeSize()
 // у RectNode); у задач минимум прежний. Минимальная высота — как и была, 28.
 RectNode.size = [100, 28]
-// Низ значка ⏰ на карточке-напоминании: время центрируется в свободной полосе ПОД ним
-// (значок сверху по центру, просьба Ярослава 01.10.26), а не в середине всей карточки.
-const REM_ICON_BOTTOM = 18
 // Цвет карточки-напоминания по умолчанию (у задачи — '#5b8fd9').
 const NOTIFY_COLOR = '#9b7bd9'
 // В монохромной теме новая карточка-напоминания тоже серая (иначе в «Чёрно-Белой» фиолетовое пятно).
@@ -2321,6 +2348,10 @@ function localPathFromUri(s) {
 // карточки, поэтому прорезь буквально «дышит» фоном. Рисуется по той же схеме, что и
 // drawFileBadge (доли от стороны значка, одна система координат).
 const REPEAT_ICON_MODES = ['once', 'daily', 'weekly', 'weekdays', 'monthly']
+// Темы с полупрозрачным телом карточки (fillTop/fillBot с альфой ~0.3–0.8): вырезка значка
+// повтора градиентом тела в них бледнеет (Ярослав 12.10.26: «1», «7» еле видны в Стекле,
+// Сиянии, Космосе, Магме, Прессе, Кобальте). В этих темах вырезка — плотный акцент карточки.
+const REP_CUT_SOLID = new Set(['a', 'k', 'o', 'q', 's', 'ab'])
 function drawRepeatIcon(ctx, mode, cx, cy, s, ink, cut) {
   const x = cx - s / 2, y = cy - s / 2
   const X = (v) => x + s * v / 24
@@ -3240,6 +3271,13 @@ async function loadGraph() {
     // Файловые карточки от устройств сразу сжимаем до «максимально низкой» высоты (06.10.26):
     // название при этом остаётся целым — расчёт см. в fitFileCard.
     for (const n of graph._nodes || []) if (isDeviceFileCard(n)) fitFileCard(n)
+    // Пол высоты напоминаний — 56, как у плиток «Смартфон»/«Планшет» (Ярослав 12.10.26):
+    // старые карточки из графа (47–54 px) приподнимаем до пола, ширину не трогаем.
+    let autoFixSeen = false
+    for (const n of graph._nodes || []) {
+      if ((n.kind || 'task') !== 'notify') continue
+      if (n.size && n.size[1] < 56) { n.size = [n.size[0], 56]; autoFixSeen = true }
+    }
     // Напоминания, созданные автоматически (телефон/MCP — см. autoFit в backend._phone_card):
     // ставим МИНИМАЛЬНУЮ ширину по умолчанию (Ярослав 12.10.26). Флаг одноразовый: снимаем
     // сразу, чтобы ручные размеры пользователя больше никогда не перезаписывались.
@@ -3253,7 +3291,7 @@ async function loadGraph() {
       n._fitOnce = false
       autoFitSeen = true
     }
-    if (autoFitSeen) { graph.setDirtyCanvas(true, true); saveGraph(true) }   // фиксируем размеры
+    if (autoFitSeen || autoFixSeen) { graph.setDirtyCanvas(true, true); saveGraph(true) }   // фиксируем размеры
     return true
   } catch (e) { console.error(e); return false }
 }
@@ -3286,17 +3324,13 @@ function fitCardToTitle(node) {
     const keep = ctx.font
     ctx.font = `${t.titleWeight} ${t.titleSize}px ${t.titleFamily}`
     const timeW = ctx.measureText(node.reminderTimeText ? node.reminderTimeText() : '').width
-    // Повторение с 12.10.26 — ЗНАЧОК (плашка), а не слово: ширина = сторона плашки
-    // (≈ t.statusSize, как в отрисовке). Дата — обычным шрифтом: иначе замер выходит
-    // меньше реального и подпись обрезается.
-    const repW = t.statusSize
+    // Дата — обычным шрифтом: иначе замер выходит меньше реального и подпись обрезается.
     ctx.font = `${t.statusSize}px ${t.statusFamily}`
     const dateW = node.due ? ctx.measureText(shortDate(node.due)).width : 0
     ctx.font = keep
-    // Нижняя строка идёт ОТ КРАЯ ДО КРАЯ: слева значок-плашка, справа дата (дата с 12.10.26
-    // дотянута до значка, см. отрисовку), — значит карточке нужно вместить оба разом:
-    // поля 6+6 и зазор 6 между ними.
-    const need = repW + dateW + 18
+    // Нижняя строка с вечера 12.10.26 ЦЕЛИКОМ за датой (плашка повтора — в левом верхнем
+    // углу): карточке нужно вмещать дату с полями 6+6.
+    const need = dateW + 12
     // Минимум ширины напоминания — 56 (тот же пол, что у ресайза в computeSize), а НЕ 100:
     // слово-повтор ушло в маленький значок, и карточка перестала нуждаться в 100 px
     // (Ярослав 12.10.26: новая или автоматически созданная карточка-напоминание должна
