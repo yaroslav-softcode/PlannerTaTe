@@ -476,6 +476,11 @@ select option {
 /* Список напоминаний (таблица): тот же угол, но выше панелей карточки — они fixed z-index 20,
    иначе таблицу нельзя было бы нажимать, когда открыта панель. */
 .rlist-wrap { position: absolute; right: 16px; bottom: 16px; z-index: 35; }
+/* Календарь (15.10.26): затемнённая подложка на весь экран, панель по центру;
+   клик по подложке закрывает (@click.self), ниже — z-index списка напоминаний,
+   выше — модалки установки/MCP (60). */
+.cal-wrap { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex;
+  align-items: center; justify-content: center; z-index: 55; }
 canvas#canvasEl { display: block; width: 100%; height: 100%; position: relative; touch-action: none; }
 
 /* Меню «Дома» по правому клику (Ярослав 09.10.26): «Добавить фон» / «Убрать фон».

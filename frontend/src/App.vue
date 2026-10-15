@@ -2,10 +2,11 @@
 import { ref, computed, reactive, nextTick, onMounted, onBeforeUnmount, toRaw, watch } from 'vue'
 import { LGraph, LGraphCanvas, LGraphNode, LiteGraph } from 'litegraph.js'
 import { NODE_COLORS, COLOR_NAMES, L18N, STATUS_SHORT, REPEATS, REPEATS_SHORT } from './i18n.js'
-import { THEMES, THEME_IDS, CUSTOM_ID, setActiveTheme, theme, accentOf, linkColorOf, statusColorOf, STATUS_COLOR, rgba, customCfg, setCustom } from './themes.js'
+import { THEMES, THEME_IDS, CUSTOM_ID, setActiveTheme, theme, themeId, accentOf, linkColorOf, statusColorOf, STATUS_COLOR, rgba, customCfg, setCustom } from './themes.js'
 import DescReader from './components/DescReader.vue'
 import LiteInspector from './components/LiteInspector.vue'
 import ReminderList from './components/ReminderList.vue'
+import CalendarPanel from './components/CalendarPanel.vue'
 import ReminderPanel from './components/ReminderPanel.vue'
 import LicensePanel from './components/LicensePanel.vue'
 import PhoneInstallPanel from './components/PhoneInstallPanel.vue'
@@ -174,8 +175,10 @@ const HOME_SIDES = ['left', 'right', 'top', 'bottom']
 // «Синхронизация» в центре «Дома» (Ярослав 15.10.26): радиус зоны клика значка обновления (F5).
 const HOME_REFRESH_R = 13
 // Значок (и зона клика) поднят на 5 px от центра плитки (3 px + 2 % высоты плитки, ~1.7 px)
-// — просьбы Ярослава 15.10.26.
-const HOME_REFRESH_DY = 5
+// — просьбы Ярослава 15.10.26. Ещё +5 % высоты плитки (4.2 px) ВВЕРХ (Ярослав: «выше его
+// положение на пять процентов» — поднимать, не увеличивая сам значок), затем −2 % (1.7 px)
+// ВНИЗ (Ярослав 15.10.26: «сделай на два процента ниже»). Итого 9.2 − 1.7 = 7.5.
+const HOME_REFRESH_DY = 7.5
 // Кнопка «открыть описание целиком» — лупа с плюсом внутри (просьба Ярослава 05.10.26).
 // Рисуем линиями, цветом текста карточки: у эмодзи на Windows свои цвета, а карточка должна
 // жить в палитре темы (как будильник и значки вложений).
@@ -3160,7 +3163,9 @@ function onContextMenu(ev) {
     // блокировка кликов не помогает — «остальные неактивны, а название правится» (Ярослав 04.10.26).
     if (readOnly.value) return
     const inp = document.getElementById('insp-' + found.id)
-    if (inp) inp.focus()
+    // Выделяем текст целиком (Ярослав 15.10.26): открыл карточку правым кликом — и сразу
+    // печатаешь своё название вместо старого, без Ctrl+A.
+    if (inp) { inp.focus(); inp.select() }
   })
 }
 
@@ -3285,17 +3290,18 @@ function toggleReminderList() {
 
 // Нажатие по строке: показываем карточку на холсте (центрируем) и выделяем её — панель открывается
 // сама. Список при этом НЕ закрывается, чтобы можно было удалить несколько подряд.
-function revealReminder(id) {
+function revealReminder(id, openPanel = true) {
   const n = graph.getNodeById(id)
   if (!n || !liteCanvas) return
   const ds = liteCanvas.ds, sc = ds.scale
   ds.offset[0] = liteCanvas.canvas.width / (2 * sc) - (n.pos[0] + n.size[0] / 2)
   ds.offset[1] = liteCanvas.canvas.height / (2 * sc) - (n.pos[1] + n.size[1] / 2)
   // Выделение ставим И в LiteGraph (иначе карточка не подсветится на холсте), И в Vue-реф
-  // (по нему открывается панель карточки).
+  // (по нему открывается панель карточки). Из календаря — openPanel=false: клик по карточке
+  // дня только НАХОДИТ её на графе, редактирование само не открывается (Ярослав 15.10.26).
   if (liteCanvas.selectNodes) liteCanvas.selectNodes([n], false)
   else if (liteCanvas.selected_nodes) liteCanvas.selected_nodes[n.id] = true
-  selectedNode.value = n
+  if (openPanel) selectedNode.value = n
   liteCanvas.setDirty(true, true)
 }
 
@@ -3308,6 +3314,130 @@ function deleteReminder(id) {
   buildReminderRows()
   saveGraph(true)                                   // удаление сразу на сервер: подпись автосохранения
                                                     // не следит за полями напоминания
+}
+
+// --- Календарь (кнопка «📅 Календарь» в сайдбаре) ---------------------------------------------
+// Просьба Ярослава 15.10.26: два месяца сразу (текущий + следующий) и листание; в дне — до трёх
+// цветных плашек в цвет карточек; наведение на плашку показывает настоящую карточку, клик по дню
+// открывает вертикальный список карточек дня в полный размер. В календарь попадают карточки
+// с заполненным сроком (due); напоминания — тоже, но узкой карточкой «под время» (дополнение
+// Ярослава в тот же день). Строки собираются из живого графа
+// при каждом открытии (как reminderRows), картинка карточки рендерится offscreen LiteGraph’ом.
+const calendarRows = ref([])
+const showCalendar = ref(false)
+const CARD_IMG_CACHE = new Map()   // id узла -> { sig, url } — кэш картинк, сбрасывается подписью
+
+// Подпись карточки: любой меняемый на виду признак + активная тема (смена темы перерисовывает)
+// + целевой единый размер дня (с ним меняется и картинка).
+function cardSig(n, w, h) {
+  return [n.title, n.description || '', n.color || '', n.status || '', n.kind || 'task', n.due || '',
+          n.image || '', n.dimMode || 'auto', w, h, themeId()].join('\u0001')
+}
+
+// Настоящая карточка в PNG: offscreen-полотно + тот же RectNode и та же тема.
+// Масштаб 2 (чёткость), вокруг прозрачные CARD_PAD px — тематическое свечение не обрезается;
+// панель рисует картинку в 1x. Размер задаёт вызывающий (w, h): в пределах одного дня все
+// карточки рисуем одинаковыми по высоте и длине (Ярослав 15.10.26) — берём максимумы дня,
+// чтобы ни один титул не обрезался.
+const CARD_PAD = 16
+function renderCardImage(n, w, h) {
+  const sig = cardSig(n, w, h)
+  const cached = CARD_IMG_CACHE.get(n.id)
+  if (cached && cached.sig === sig) return cached.url
+  const SC = 2
+  const cv = document.createElement('canvas')
+  cv.width = Math.ceil((w + CARD_PAD * 2) * SC)
+  cv.height = Math.ceil((h + CARD_PAD * 2) * SC)
+  const g = new LGraph()
+  const clone = new RectNode()
+  for (const k of ['title', 'description', 'color', 'status', 'kind', 'due', 'tags', 'image',
+                   'files', 'dimMode', 'remindTime', 'repeatMode', 'channels', 'device']) {
+    const v = n[k]
+    if (v !== undefined) clone[k] = Array.isArray(v) ? v.slice() : v
+  }
+  clone.size = [w, h]
+  clone.pos = [0, 0]
+  // Титул в календаре — максимум ДВЕ СТРОКИ (Ярослав 15.10.26): переносим тематическим
+  // шрифтом титула, всё, что не влезло, режем многоточием. wrapText разбивает и по \n —
+  // значит рендерер нарисует ровно заданные строки и не вытянет карточку выше.
+  const th = theme()
+  const mctx = cv.getContext('2d')
+  mctx.font = `${th.titleWeight} ${th.titleSize}px ${th.titleFamily}`
+  const tl = wrapText(mctx, clone.title || '', w - 24)
+  if (tl.length > 2) clone.title = tl[0] + '\n' + fitText(mctx, tl.slice(1).join(' '), w - 24)
+  g.add(clone)
+  const off = new LGraphCanvas(cv, g, { skip_render: true, skip_events: true })
+  off.show_info = false
+  off.background_image = null
+  off.render_canvas_border = false
+  off.ds.scale = SC
+  off.ds.offset = [CARD_PAD, CARD_PAD]
+  const savedScale = viewScale                 // карточки выбирают план отрисовки по глобальному viewScale
+  viewScale = SC
+  try {
+    off.setDirty(true, true)
+    off.draw(true, true)
+  } finally { viewScale = savedScale }
+  const url = cv.toDataURL('image/png')
+  CARD_IMG_CACHE.set(n.id, { sig, url })
+  // Фон карточки мог ещё не загрузиться: первый рендер без него, по готовности перестроим строки.
+  if (n.image) {
+    const im = getImage(n.image)
+    if (!im.complete) im.addEventListener('load', () => buildCalendarRows(), { once: true })
+  }
+  return url
+}
+
+function buildCalendarRows() {
+  // Группируем по дате срока: в пределах дня все карточки рисуем ОДНАКОВЫМИ по высоте и
+  // длине (Ярослав 15.10.26) — единый размер = максимумы дня, но не больше компактных рамок.
+  const groups = new Map()                            // due -> [узлы дня]
+  for (const n of (graph._nodes || [])) {
+    if ((n.kind || 'task') === 'device') continue     // плитки-устройства — не в календарь
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(n.due || '')) continue  // только карточки с заполненным сроком
+    let a = groups.get(n.due)
+    if (!a) { a = []; groups.set(n.due, a) }
+    a.push(n)
+  }
+  const rows = []
+  // Родитель напоминания — источник его входной связи (addNotifyFrom: карточка → напоминание).
+  // В списке дня напоминания рисуем СПРАВА от своей карточки (Ярослав 15.10.26, связи не рисуем).
+  const linkOrigin = (n) => {
+    const s = (n.inputs || [])[0]
+    const l = (s && s.link != null) ? graph.links[s.link] : null
+    return l ? l.origin_id : null
+  }
+  // Компактный календарь (Ярослав 15.10.26): единый размер дня, но не больше CAL_MAX_W на
+  // CAL_MAX_H — длинные карточки урезаем, титул рендерится максимум в две строки.
+  // Напоминания (Ярослав 15.10.26, дополнение) в календарь попадают, но карточка их УЖЕ
+  // задачи: на ней вмещать нужно только время.
+  const CAL_MAX_W = 220, CAL_MAX_H = 56
+  const CAL_REM_W = 110
+  for (const [due, arr] of groups) {
+    const tasks = arr.filter(n => (n.kind || 'task') !== 'notify')
+    const rems = arr.filter(n => (n.kind || 'task') === 'notify')
+    const push = (list, W, H, notify) => {
+      for (const n of list) rows.push({
+        id: n.id, due, notify,
+        parent: notify ? linkOrigin(n) : null,
+        color: n.color ? accentOf(n.color) : '',              // плашка в цвет карточки (моно-тема → серый)
+        w: W, h: H,
+        img: renderCardImage(n, W, H),
+      })
+    }
+    if (tasks.length)
+      push(tasks, Math.min(CAL_MAX_W, Math.max(...tasks.map(n => n.size[0]))),
+                 Math.min(CAL_MAX_H, Math.max(...tasks.map(n => n.size[1]))), false)
+    if (rems.length)
+      push(rems, Math.min(CAL_REM_W, Math.max(...rems.map(n => n.size[0]))),
+                 Math.min(CAL_MAX_H, Math.max(...rems.map(n => n.size[1]))), true)
+  }
+  calendarRows.value = rows
+}
+
+function toggleCalendar() {
+  showCalendar.value = !showCalendar.value
+  if (showCalendar.value) buildCalendarRows()
 }
 
 // Новая карточка — в середине видимой части активного окна. Ярослав 01.10.26: «чтобы новые
@@ -3759,6 +3889,7 @@ function flash(msg) {
 }
 
 window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && showCalendar.value) { showCalendar.value = false; return }
   if (ev.key === 'Escape' && descReaderNode.value) { descReaderNode.value = null; return }
   if (ev.key === 'Escape' && viewImage.value) { viewImage.value = ''; return }
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 's') { ev.preventDefault(); saveGraph() }
@@ -3868,7 +3999,7 @@ onBeforeUnmount(() => {
       <!-- Интерфейс: 10 тем (палитры — src/themes.js, переменные — styles.css).
            Показываем только активную; остальные — в списке ниже (клик по фону закрывает). -->
       <div class="field">
-        <label class="label">Интерфейс</label>
+        <label class="label">{{ t('themeLabel') }}</label>
         <div class="theme-picker">
           <button class="theme-trigger" :title="THEMES[themeName].hint" @click="toggleThemeList">
             <span class="theme-prev" :style="{ background: THEMES[themeName].preview.bg }">
@@ -3956,6 +4087,7 @@ onBeforeUnmount(() => {
            а Ctrl+S на всякий случай остался. -->
 
       <button class="btn" @click="toggleReminderList"><span class="emo">⏰</span> {{ t('notify') }}</button>
+      <button class="btn" @click="toggleCalendar"><span class="emo">📅</span> {{ t('calBtn') }}</button>
 
       <!-- Подпись «PlannerTaTe v0.5 — LiteGraph / Прямоугольные узлы + коннекторы» удалена 01.10.26
            по просьбе Ярослава. -->
@@ -4058,6 +4190,15 @@ onBeforeUnmount(() => {
       <div class="rlist-wrap">
         <ReminderList v-if="showNotify" :lang="lang" :rows="reminderRows"
                       @close="showNotify = false" @delete="deleteReminder" @reveal="revealReminder" />
+      </div>
+
+      <!-- Календарь (Ярослав 15.10.26): два месяца, плашки карточек по дням; клик по дню —
+           вертикальный список карточек дня в полный размер; клик по карточке — показать на поле
+           (revealReminder работает по любому id узла, не только напоминания). -->
+      <div v-if="showCalendar" class="cal-wrap" @click.self="showCalendar = false">
+        <CalendarPanel :lang="lang" :rows="calendarRows"
+                       @close="showCalendar = false"
+                       @reveal="(id) => { revealReminder(id, false); showCalendar = false }" />
       </div>
 
       <!-- Пометка «только просмотр» (сохранённая копия на телефоне/планшете) -->

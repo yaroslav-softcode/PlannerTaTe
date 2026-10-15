@@ -69,6 +69,12 @@ export const L18N = {
     title: 'PlannerTaTe', status: 'Статус',
     newRoot: '+ Корневой узел', addTask: '+ Задача', addNotify: '+ Напоминание', save: 'Сохранить (Ctrl+S)', open: 'Открыть',
     notify: 'Список напоминаний', notifyTitle: 'Напоминание', refreshTip: 'Обновить (F5)', taskTitle: 'Задача', collapse: 'Свернуть', expand: 'Развернуть', settings: 'Настройки', label: 'Название', color: 'Цвет', tags: 'Теги',
+    // Календарь (просьба Ярослава 15.10.26): два месяца, плашки-карточки, список карточек дня.
+    calBtn: 'Календарь', calTitle: 'Календарь', calToday: 'Сегодня', calBack: 'Месяцы',
+    themeLabel: 'Интерфейс',
+    calHint: 'Наведите на цветную плашку — увидите карточку; нажмите на день — покажем все карточки дня',
+    calDayEmpty: 'В этот день нет карточек со сроком', calNoDue: 'Ни у одной карточки нет срока — в календаре пусто',
+    calReveal: 'Показать на поле',
     delete: 'Удалить узел', connectFrom: 'Связать отсюда',
     readerBack: 'Назад',
     // Подсказка по карточкам — МАССИВОМ: в панели каждая комбинация выводится своей строкой
@@ -189,6 +195,12 @@ export const L18N = {
     title: 'PlannerTaTe', status: 'Status',
     newRoot: '+ Root node', addTask: '+ Task', addNotify: '+ Reminder', save: 'Save (Ctrl+S)', open: 'Open',
     notify: 'Reminder list', notifyTitle: 'Reminder', refreshTip: 'Refresh (F5)', taskTitle: 'Task', collapse: 'Collapse', expand: 'Expand', settings: 'Settings', label: 'Label', color: 'Color', tags: 'Tags',
+    // Calendar (Yaroslav's request 15.10.26)
+    calBtn: 'Calendar', calTitle: 'Calendar', calToday: 'Today', calBack: 'Months',
+    themeLabel: 'Interface',
+    calHint: 'Hover a color chip to preview the card; click a day to see all cards of that day',
+    calDayEmpty: 'No cards with a due date on this day', calNoDue: 'No card has a due date — the calendar is empty',
+    calReveal: 'Show on canvas',
     delete: 'Delete node', connectFrom: 'Connect from here',
     readerBack: 'Back',
     selectHint: [
