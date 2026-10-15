@@ -171,6 +171,11 @@ const PORT = {
 // слева, справа, сверху, снизу. Индекс слота = индекс стороны в HOME_SIDES.
 const HOME_SIDE = 84
 const HOME_SIDES = ['left', 'right', 'top', 'bottom']
+// «Синхронизация» в центре «Дома» (Ярослав 15.10.26): радиус зоны клика значка обновления (F5).
+const HOME_REFRESH_R = 13
+// Значок (и зона клика) поднят на 5 px от центра плитки (3 px + 2 % высоты плитки, ~1.7 px)
+// — просьбы Ярослава 15.10.26.
+const HOME_REFRESH_DY = 5
 // Кнопка «открыть описание целиком» — лупа с плюсом внутри (просьба Ярослава 05.10.26).
 // Рисуем линиями, цветом текста карточки: у эмодзи на Windows свои цвета, а карточка должна
 // жить в палитре темы (как будильник и значки вложений).
@@ -388,6 +393,17 @@ class RectNode extends LGraphNode {
   // почти срезает нижнюю кромку: клик ВЫШЕ карточки выбирал её, а по нижней границе — не
   // выбирал (жалоба Ярослава 01.10.26: «смести область нажатия вниз»). По бокам оставляем
   // библиотечные ±4 px, сверху и снизу — по 2 px, чтобы кромки уверенно брались мышью.
+  // Угловой ресайз (см. обёртку processMouseDown): пока угол зажат, карточку НЕ тащим —
+  // LiteGraph видит true и не начинает перетаскивание (block_drag_node).
+  onMouseDown(e, pos, canvas) {
+    // «Синхронизация» в центре «Дома»: клик по значку = перезагрузка страницы (как F5).
+    // Зона активна и с фоновой картинкой (значок скрыт, клик остаётся) — Ярослав 15.10.26.
+    if (this.device === 'home' && pos) {
+      const dx = pos[0] - this.size[0] / 2, dy = pos[1] - (this.size[1] / 2 - HOME_REFRESH_DY)
+      if (dx * dx + dy * dy <= HOME_REFRESH_R * HOME_REFRESH_R) { location.reload(); return true }
+    }
+    return !!(canvas && canvas._ptCorner)
+  }
   isPointInside(x, y, margin) {
     const m = margin || 0
     const px = this.pos[0], py = this.pos[1], w = this.size[0], h = this.size[1]
@@ -489,6 +505,12 @@ class RectNode extends LGraphNode {
     // Пол высоты напоминания — 56, как у плиток «Смартфон»/«Планшет» (Ярослав 12.10.26):
     // ниже значки, время и дата не помещаются.
     if ((this.kind || 'task') === 'notify') return [56, 56]
+    // Пол плитки устройства (Ярослав 15.10.26): «Смартфон»/«Планшет» можно растягивать
+    // больше минимума 56×56; «Дом» не тянется вовсе (resizable = false).
+    if ((this.kind || 'task') === 'device') {
+      const s = this.device === 'home' ? HOME_SIDE : DEVICE_SIDE
+      return [s, s]
+    }
     return super.computeSize(out)
   }
   // Несколько карточек на один вход: при подключении к уже занятому слоту создаём новый пустой.
@@ -687,6 +709,23 @@ class RectNode extends LGraphNode {
       ctx.beginPath(); ctx.rect(cx - 14.5, wy, ws, ws); ctx.stroke()
       ctx.beginPath(); ctx.rect(cx + 6.5, wy, ws, ws); ctx.stroke()
       }
+      // «Синхронизация» в центре «Дома» (Ярослав 15.10.26): кнопка обновления (F5), значок №2.
+      // С фоновой картинкой значок СКРЫТ (как глиф домика), зона клика остаётся активной.
+      // Подложки и обводки НЕТ для всех тем (Ярослав 15.10.26): только стрелки акцентным цветом.
+      if (!homeBg) {
+        const cy0 = h / 2 - HOME_REFRESH_DY
+        const s = 13 / 24
+        ctx.save()
+        ctx.translate(cx - 12 * s, cy0 - 12 * s); ctx.scale(s, s)
+        ctx.lineWidth = 2.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+        ctx.strokeStyle = acc
+        ctx.stroke(new Path2D('M3.51 9a9 9 0 0 1 14.85-3.36L23 10'))
+        ctx.stroke(new Path2D('M1 14l4.64 4.36A9 9 0 0 0 20.49 15'))
+        ctx.beginPath(); ctx.moveTo(23, 4); ctx.lineTo(23, 10); ctx.lineTo(17, 10); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(1, 20); ctx.lineTo(1, 14); ctx.lineTo(7, 14); ctx.stroke()
+        ctx.restore()
+      }
+      this.tooltip = t('refreshTip')   // LiteGraph покажет подсказку при наведении
     } else if (isTab) {
       const bw = 28, bh = 21, bx = cx - bw / 2, by = 10
       roundRect(ctx, bx, by, bw, bh, 3); ctx.stroke()
@@ -1233,6 +1272,94 @@ const NOTIFY_COLOR = '#9b7bd9'
 // В монохромной теме новая карточка-напоминания тоже серая (иначе в «Чёрно-Белой» фиолетовое пятно).
 function notifyColor() { return theme().mono ? '#8e949c' : NOTIFY_COLOR }
 LiteGraph.registerNodeType('rectnode', RectNode)
+
+// --- Ресайз карточки за ЛЮБОЙ из четырёх углов (просьба Ярослава 15.10.26) ----------------
+// LiteGraph натаскивает только нижний правый угол: processMouseDown берёт зону 10×10 у него,
+// processMouseMove считает размер как «мышь − pos». Мы добавляем три остальных угла:
+// нажатие запоминает угол и НЕПОДВИЖНЫЙ противоположный угол прямоугольника, драг пересчитывает
+// pos и size от неподвижного угла, клампя по computeSize() — тот же пол, что у нативного ресайза.
+// node_modules не правим: точечная обёртка трёх методов LGraphCanvas.prototype.
+const RESIZE_CORNER = 5   // половина зоны 10×10 — как у нативного угла LiteGraph
+function cornerOfNode(node, x, y) {
+  // [dx, dy]: 0 — двигается левый/верхний край, 1 — правый/нижний; null — не у угла
+  const L = node.pos[0], T = node.pos[1], R = L + node.size[0], B = T + node.size[1]
+  const inL = Math.abs(x - L) <= RESIZE_CORNER, inR = Math.abs(x - R) <= RESIZE_CORNER
+  const inT = Math.abs(y - T) <= RESIZE_CORNER, inB = Math.abs(y - B) <= RESIZE_CORNER
+  if (inL && inT) return [0, 0]
+  if (inR && inT) return [1, 0]
+  if (inL && inB) return [0, 1]
+  if (inR && inB) return [1, 1]
+  return null
+}
+const _origPMD = LGraphCanvas.prototype.processMouseDown
+LGraphCanvas.prototype.processMouseDown = function (e) {
+  this._ptCorner = null
+  // e.canvasX/canvasY считает ТОЛЬКО adjustMouseEvent (её зовёт оригинал ниже) — до вызова
+  // они undefined, угол бы не распознался никогда.
+  if (this.graph && this.adjustMouseEvent) this.adjustMouseEvent(e)
+  if (!this.read_only && !this.live_mode && e.which === 1 && !this.pointer_is_double &&
+      !e.ctrlKey && !e.altKey && !this.connecting_node && this.graph) {
+    const node = this.graph.getNodeOnPos(e.canvasX, e.canvasY, this.visible_nodes, 5)
+    if (node && node.resizable !== false && !node.flags.collapsed) {
+      const c = cornerOfNode(node, e.canvasX, e.canvasY)
+      // Нижний правый угол ведёт нативный LiteGraph — берём только три остальных.
+      if (c && !(c[0] && c[1])) {
+        this._ptCorner = c
+        // Неподвижный угол — противоположный тому, за который тянем.
+        this._ptFixed = [c[0] ? node.pos[0] : node.pos[0] + node.size[0],
+                         c[1] ? node.pos[1] : node.pos[1] + node.size[1]]
+        this.graph.beforeChange()
+        this.resizing_node = node
+        this.canvas.style.cursor = (c[0] === c[1]) ? 'nwse-resize' : 'nesw-resize'
+      }
+    }
+  }
+  return _origPMD.call(this, e)
+}
+const _origPMM = LGraphCanvas.prototype.processMouseMove
+LGraphCanvas.prototype.processMouseMove = function (e) {
+  if (this.graph && this.adjustMouseEvent) this.adjustMouseEvent(e)   // canvasX/Y, см. выше
+  const rn = this.resizing_node, c = this._ptCorner
+  if (rn && c && !(c[0] && c[1])) {
+    this.resizing_node = null            // прячем наш угол от нативной ветки ресайза
+    const r = _origPMM.call(this, e)
+    this.resizing_node = rn
+    const min = rn.computeSize()
+    const fx = this._ptFixed[0], fy = this._ptFixed[1]
+    let x = rn.pos[0], y = rn.pos[1], w = rn.size[0], h = rn.size[1]
+    if (c[0] === 0) { x = Math.min(e.canvasX, fx - min[0]); w = fx - x }
+    else { w = Math.max(min[0], e.canvasX - rn.pos[0]) }
+    if (c[1] === 0) { y = Math.min(e.canvasY, fy - min[1]); h = fy - y }
+    else { h = Math.max(min[1], e.canvasY - rn.pos[1]) }
+    rn.pos[0] = x; rn.pos[1] = y
+    rn.setSize([w, h])
+    this.canvas.style.cursor = (c[0] === c[1]) ? 'nwse-resize' : 'nesw-resize'
+    this.dirty_canvas = true; this.dirty_bgcanvas = true
+    return r
+  }
+  const r2 = _origPMM.call(this, e)
+  // Курсор наведения: LiteGraph знает только «se-resize» у нижнего правого угла — добавляем остальные.
+  if (this.canvas && this.canvas.style.cursor === 'crosshair' && this.graph &&
+      !this.read_only && !this.live_mode) {
+    const node = this.graph.getNodeOnPos(e.canvasX, e.canvasY, this.visible_nodes, 5)
+    // Значок обновления в центре «Дома»: курсор-рука (зона активна и под фоновой картинкой).
+    if (node && node.device === 'home') {
+      const dx = e.canvasX - (node.pos[0] + node.size[0] / 2), dy = e.canvasY - (node.pos[1] + node.size[1] / 2 - HOME_REFRESH_DY)
+      if (dx * dx + dy * dy <= HOME_REFRESH_R * HOME_REFRESH_R) this.canvas.style.cursor = 'pointer'
+    }
+    if (node && node.resizable !== false && !node.flags.collapsed) {
+      const c2 = cornerOfNode(node, e.canvasX, e.canvasY)
+      if (c2) this.canvas.style.cursor = (c2[0] === c2[1]) ? 'nwse-resize' : 'nesw-resize'
+    }
+  }
+  return r2
+}
+const _origPMU = LGraphCanvas.prototype.processMouseUp
+LGraphCanvas.prototype.processMouseUp = function (e) {
+  const r = _origPMU.call(this, e)
+  this._ptCorner = null; this._ptFixed = null
+  return r
+}
 // ПУСТОЙ заголовок карточки должен честно оставаться пустым и после перезагрузки. Библиотека
 // при загрузке графа подставляет в пустое поле имя класса: `configure` → `this.title =
 // this.constructor.title`, а registerNodeType выше записывает сюда `base_class.name`
@@ -1470,6 +1597,9 @@ async function initCanvas() {
   // Двойной клик по карточке создаёт подзадачу со связью (см. onDblClick), по пустому месту —
   // ничего; узел добавляется кнопкой «+ Задача» в сайдбаре.
   canvasEl.value.addEventListener('dblclick', onDblClick)
+  // Двойной клик начинается с обычного нажатия: снимаем «верёвочку», чтобы ветка,
+  // отпущенная перед упорядочиванием, не доехала обратно к старым позициям (15.10.26).
+  document.addEventListener('dblclick', () => { dragFollow = null }, true)
   // правый клик по карточке — открыть редактирование в инспекторе
   canvasEl.value.addEventListener('contextmenu', onContextMenu)
   // рисунки: перетаскивание файла прямо на карточку (Ctrl+V обрабатывается на уровне документа)
@@ -1970,7 +2100,9 @@ function ensureDevicePanels() {
     n.kind = 'device'
     n.device = dev
     n.size = [side, side]
-    n.resizable = false                 // плитка не тянется за уголок
+    // 15.10.26 (просьба Ярослава): «Смартфон»/«Планшет» теперь МОЖНО растягивать за угол
+    // больше минимума 56×56 (пол — в computeSize); «Дом» остаётся фиксированным.
+    if (dev === 'home') n.resizable = false
     n.inputs = []                       // кольца нет — панель только источник связей
     if (dev === 'home') {
       // Четыре выхода: 0 — слева, 1 — справа, 2 — сверху, 3 — снизу (сторона в
@@ -2006,6 +2138,9 @@ function onDblClick(ev) {
   try { parent = graph.getNodeOnPos(gx, gy) } catch (e) {}
   if (!parent) return                 // клик по пустому месту — ничего не создаём
   parent = toRaw(parent)
+  // Двойной клик по плашке связей родителя (точка-порт) = автораскладка детей (Ярослав 15.10.26):
+  // ровная колонка справа от родителя (порт слева — колонка слева), порядок по времени сверху вниз.
+  if (autoLayoutChildren(parent, gx, gy)) return
   if ((parent.kind || 'task') === 'device') {
     // По плиткам «Смартфон»/«Планшет» подзадача не создаётся. По «Дому» — создаётся:
     // «при двойном нажатии ЛКМ должна появляться новая задача и связь к ней» (Ярослав 09.10.26).
@@ -2025,6 +2160,63 @@ function onDblClick(ev) {
   liteCanvas.selectNode(child)        // новая карточка подсвечена — видно, что она появилась
   liteCanvas.setDirty(true, true)
   onNodeChange()                      // автосохранение подхватит карточку и связь
+}
+
+// Автораскладка детей (Ярослав 15.10.26): двойной клик ЛКМ по плашке-порту родителя.
+// Дети = карточки на концах связей, выходящих из этой плашки; порядок — по сроку и времени
+// (тот же ключ, что в списке напоминаний: due + remindTime, без срока — в конец).
+// Колонка справа от родителя; если порт на левой стороне — колонка слева. У «Дома» четыре
+// порта: верх/низ дают ряд (слева направо по времени), лево/право — колонку.
+// Возвращает true, если клик пришёлся на плашку (подзадача при этом НЕ создаётся).
+function autoLayoutChildren(parent, gx, gy) {
+  if (!graph || !parent || typeof parent.portPoints !== 'function') return false
+  const outs = parent.portPoints(false) || []
+  const hit = outs.find(pt => Math.hypot(gx - (parent.pos[0] + pt.lx), gy - (parent.pos[1] + pt.ly)) <= PORT.r + 4)
+  if (!hit) return false
+  const w = parent.size[0], h = parent.size[1]
+  let side = hit.lx > w / 2 ? 'right' : 'left'
+  if (parent.device === 'home') {
+    if (hit.ly <= 1) side = 'top'
+    else if (hit.ly >= h - 1) side = 'bottom'
+    else side = hit.lx <= 1 ? 'left' : 'right'
+  }
+  const kids = []
+  const out = (parent.outputs || [])[hit.slot]
+  for (const lid of ((out && out.links) || [])) {
+    const L = graph.links[lid]
+    const t = L && graph.getNodeById(L.target_id)
+    if (t && t !== parent && (t.kind || 'task') !== 'device' && !kids.includes(t)) kids.push(t)
+  }
+  if (kids.length) {
+    const key = n => `${n.due || '9999-01-01'} ${String(n.remindTime || '99:99')}`
+    kids.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0))
+    // Зазоры минимальные (Ярослав 15.10.26: «между вкладками зазоры очень маленькие»);
+    // в ряд по горизонтали оставляем 46 — там подписи и связи, вертикальный столбик плотнее.
+    const GAP_X = 46, GAP_Y = 6
+    if (side === 'left' || side === 'right') {
+      // Колонка центрируется по родителю: одинаково вверх и вниз от его уровня,
+      // порядок по времени сверху вниз (Ярослав 15.10.26).
+      let total = 0
+      for (const k of kids) total += k.size[1]
+      total += GAP_Y * (kids.length - 1)
+      let y = parent.pos[1] + (h - total) / 2
+      for (const k of kids) {
+        k.pos[0] = side === 'right' ? parent.pos[0] + w + GAP_X : parent.pos[0] - GAP_X - k.size[0]
+        k.pos[1] = y
+        y += k.size[1] + GAP_Y
+      }
+    } else {
+      let x = parent.pos[0]
+      for (const k of kids) {
+        k.pos[1] = side === 'bottom' ? parent.pos[1] + h + GAP_Y : parent.pos[1] - GAP_Y - k.size[1]
+        k.pos[0] = x
+        x += k.size[0] + GAP_X
+      }
+    }
+    liteCanvas.setDirty(true, true)
+    onNodeChange()
+  }
+  return true
 }
 
 // Подзадача: пустая карточка справа от основной + связь «основная → подзадача».
@@ -2048,6 +2240,9 @@ function createSubtask(parent, index = 0, total = 1) {
     }
   }
   const n = graph.add(new RectNode())
+  // 15.10.26 (просьба Ярослава): карточка, созданная из уже имеющейся (двойной клик),
+  // наследует её цвет; у родителя цвета нет — остаётся заводской.
+  if (parent.color) n.color = parent.color
   n.pos = [cx - w / 2, cy - h / 2]
   try { parent.connect(0, n, 0) } catch (e) {}   // выход основной → вход подзадачи
   n._fitOnce = true                              // размер под название подберётся при первой правке
@@ -3054,7 +3249,7 @@ function deleteSelected() {
 // Строки собираем из ЖИВОГО графа при каждом открытии и после каждого удаления: graph._nodes не
 // реактивен, вычисляемого свойства тут мало.
 const reminderRows = ref([])
-const CH_REM_KEY = { pc: 'remPc', phone: 'remPhone', tablet: 'remTablet', telegram: 'remTg', vkmax: 'remVk' }
+const CH_REM_KEY = { pc: 'rlChPc', phone: 'rlChPhone', tablet: 'rlChTablet', telegram: 'rlChTg', vkmax: 'rlChVk' }
 
 function buildReminderRows() {
   const d = L18N[(lang && lang.value) === 'en' ? 'en' : 'ru']
@@ -3063,7 +3258,9 @@ function buildReminderRows() {
     if ((n.kind || 'task') !== 'notify') continue
     const repWord = (REPEATS[(lang && lang.value) === 'en' ? 'en' : 'ru'] || REPEATS.ru)[n.repeatMode] ||
                     REPEATS[(lang && lang.value) === 'en' ? 'en' : 'ru'].once
-    const chans = (n.channels || []).filter(c => CH_REM_KEY[c]).map(c => d[CH_REM_KEY[c]])
+    // new Set — канал не должен писаться дважды (Ярослав 15.10.26: «на телефоне, на планшете
+    // и ещё раз на планшете»); дубли чиним и при загрузке графа, и на приёме с телефона.
+    const chans = [...new Set(n.channels || [])].filter(c => CH_REM_KEY[c]).map(c => d[CH_REM_KEY[c]])
     rows.push({
       id: n.id,
       title: String(n.title || '').trim(),
@@ -3277,7 +3474,15 @@ async function loadGraph() {
     // старые карточки из графа (47–54 px) приподнимаем до пола, ширину не трогаем.
     let autoFixSeen = false
     for (const n of graph._nodes || []) {
-      if ((n.kind || 'task') !== 'notify') continue
+      const kind = n.kind || 'task'
+      if (kind === 'device') { n.resizable = (n.device !== 'home'); continue }
+      if (kind !== 'notify') continue
+      // Дубли каналов (Ярослав 15.10.26: «на телефоне, на планшете и ещё раз на планшете»):
+      // телефон прислал список с повтором — оставляем каждый канал один раз.
+      if (Array.isArray(n.channels)) {
+        const uniq = [...new Set(n.channels)]
+        if (uniq.length !== n.channels.length) { n.channels = uniq; autoFixSeen = true }
+      }
       if (n.size && n.size[1] < 56) { n.size = [n.size[0], 56]; autoFixSeen = true }
     }
     // Напоминания, созданные автоматически (телефон/MCP — см. autoFit в backend._phone_card):
@@ -3477,7 +3682,8 @@ function saveAndCloseInspector(payload) {
 // на момент создания: дальше напоминание живёт своей жизнью. Срок — сегодня + ближайший круглый час.
 function fillReminderDefaults(node, src) {
   node.kind = 'notify'
-  node.color = notifyColor()
+  // Цвет наследуется с исходной карточки (Ярослав 15.10.26); у напоминания без родителя — свой цвет по умолчанию.
+  node.color = (src && src.color) || notifyColor()
   node.title = (src && String(src.title || '').trim()) || t('notifyTitle')
   node.description = (src && src.description) || ''
   node.due = todayISO()

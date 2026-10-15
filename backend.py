@@ -1313,6 +1313,9 @@ def _add_phone_task(data):
             raw_ch = raw_ch.replace(";", ",").split(",")
         chans = [str(c).strip().lower() for c in (raw_ch or [])]
         chans = [c for c in chans if c in ("pc", "phone", "tablet", "telegram", "vkmax")]
+        # 15.10.26: список без повторов (телефон мог прислать канал дважды — в списке
+        # напоминаний он печатался дважды).
+        chans = list(dict.fromkeys(chans))
         if not chans:
             # По умолчанию — ВСЕ ТРИ канала (просьба Ярослава 06.10.26): компьютер, телефон и
             # планшет; лишние пользователь снимает галочками. Сюда попадаем только со старых

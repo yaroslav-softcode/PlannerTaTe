@@ -68,7 +68,7 @@ export const L18N = {
   ru: {
     title: 'PlannerTaTe', status: 'Статус',
     newRoot: '+ Корневой узел', addTask: '+ Задача', addNotify: '+ Напоминание', save: 'Сохранить (Ctrl+S)', open: 'Открыть',
-    notify: 'Список напоминаний', notifyTitle: 'Напоминание', taskTitle: 'Задача', collapse: 'Свернуть', expand: 'Развернуть', settings: 'Настройки', label: 'Название', color: 'Цвет', tags: 'Теги',
+    notify: 'Список напоминаний', notifyTitle: 'Напоминание', refreshTip: 'Обновить (F5)', taskTitle: 'Задача', collapse: 'Свернуть', expand: 'Развернуть', settings: 'Настройки', label: 'Название', color: 'Цвет', tags: 'Теги',
     delete: 'Удалить узел', connectFrom: 'Связать отсюда',
     readerBack: 'Назад',
     // Подсказка по карточкам — МАССИВОМ: в панели каждая комбинация выводится своей строкой
@@ -98,6 +98,9 @@ export const L18N = {
     rlDelete: 'Удалить', rlReally: 'Точно удалить?', rlReveal: 'Нажми, чтобы показать карточку на холсте',
     remNoCard: 'Сначала выберите карточку-задачу', today: 'Сегодня',
     remPc: 'На компьютере', remPhone: 'На телефоне', remTablet: 'На планшете', remTg: 'Telegram (бот)', remVk: 'Макс',
+    /* Колонка «Доставка» в списке напоминаний — проще, именительным падежом (Ярослав 15.10.26):
+       «компьютер, планшет, телефон». Отдельные ключи, чтобы инспектор (remPc и выше) не задеть. */
+    rlChPc: 'компьютер', rlChPhone: 'телефон', rlChTablet: 'планшет', rlChTg: 'Telegram (бот)', rlChVk: 'Макс',
     /* Лицензия / поддержка автора (03.10.26). Строки оценки идут в том же порядке, что суммы
        в LicensePanel.vue (10 / 100 / 500 / 1000 ₽) — переставлять только вместе. */
     /* Установка приложения на телефон (03.10.26, просьба Ярослава) */
@@ -185,7 +188,7 @@ export const L18N = {
   en: {
     title: 'PlannerTaTe', status: 'Status',
     newRoot: '+ Root node', addTask: '+ Task', addNotify: '+ Reminder', save: 'Save (Ctrl+S)', open: 'Open',
-    notify: 'Reminder list', notifyTitle: 'Reminder', taskTitle: 'Task', collapse: 'Collapse', expand: 'Expand', settings: 'Settings', label: 'Label', color: 'Color', tags: 'Tags',
+    notify: 'Reminder list', notifyTitle: 'Reminder', refreshTip: 'Refresh (F5)', taskTitle: 'Task', collapse: 'Collapse', expand: 'Expand', settings: 'Settings', label: 'Label', color: 'Color', tags: 'Tags',
     delete: 'Delete node', connectFrom: 'Connect from here',
     readerBack: 'Back',
     selectHint: [
@@ -213,6 +216,7 @@ export const L18N = {
     rlDelete: 'Delete', rlReally: 'Delete for sure?', rlReveal: 'Click to show the card on the canvas',
     remNoCard: 'Select a task card first', today: 'Today',
     remPc: 'On this computer', remPhone: 'On the phone', remTablet: 'On the tablet', remTg: 'Telegram (bot)', remVk: 'Max',
+    rlChPc: 'computer', rlChPhone: 'phone', rlChTablet: 'tablet', rlChTg: 'Telegram (bot)', rlChVk: 'Max',
     /* Licence / supporting the author (03.10.26) — same order as the amounts in LicensePanel.vue */
     /* Phone app install (03.10.26) */
     phoneBtn: 'Install on the phone',

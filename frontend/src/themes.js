@@ -1085,8 +1085,10 @@ export const THEMES = {
     canvas: { roundRadius: 3, linkWidth: 1.8, linkBorder: null, linkGlow: 0, linkGlowAlpha: 0, ghost: '#8f8a92' },
     node: {
       radius: 3,
-      fillTop: () => '#ffffff',
-      fillBot: () => '#ffffff',
+      // 15.10.26 (просьба Ярослава): заливка карточки подмешивает её цвет — как в «Туши»,
+      // а не чистый белый.
+      fillTop: (acc) => mixHex('#ffffff', acc, 0.15),
+      fillBot: (acc) => mixHex('#ffffff', acc, 0.07),
       border: () => '#1c1a20',
       borderW: 1.5,
       glowColor: () => 'rgba(24,39,75,.16)',
