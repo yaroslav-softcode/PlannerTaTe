@@ -1,6 +1,6 @@
 # PlannerTaTe
 
-**Free task planner where your plan is a map, not a list.** Tasks live as cards on an endless canvas, and you link them into a graph — so you can see what a project is made of, what depends on what, and what is in progress right now.
+**Free private task planner where your plan is a map, not a list.** Tasks live as cards on an endless canvas, and you link them into a graph — so you can see what a project is made of, what depends on what, and what is in progress right now.
 
 Windows desktop application + Android companion, connected over your own home network. Everything is stored locally: no cloud, no account, no telemetry.
 
@@ -89,7 +89,7 @@ MIT — see [LICENSE](LICENSE). © Yaroslav Khmelev.
 
 # PlannerTaTe
 
-**Бесплатный планировщик задач, в котором план — это карта.** Задачи живут карточками на бесконечном холсте, а вы соединяете их связями: видно, из чего состоит дело, что от чего зависит и что в работе прямо сейчас.
+**Бесплатный приватный планировщик задач, в котором план — это карта.** Задачи живут карточками на бесконечном холсте, а вы соединяете их связями: видно, из чего состоит дело, что от чего зависит и что в работе прямо сейчас.
 
 Приложение для Windows и приложение-спутник для Android, связанные через вашу домашнюю сеть. Всё хранится локально: без облака, без учётной записи, без телеметрии.
 
