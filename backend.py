@@ -164,9 +164,44 @@ def _net_addresses():
             if ip != cable:
                 main = ip
                 break
-    data = {"cable": cable, "main": main or (pairs[0][0] if pairs else "127.0.0.1"), "vpn": vpn}
+    # "pairs" — полный список (адрес, описание адаптера): нужен _lan_ip(), чтобы отбросить
+    # виртуальные адаптеры по описанию, а не только по ключевым словам VPN (17.10.26)
+    data = {"cable": cable, "main": main or (pairs[0][0] if pairs else "127.0.0.1"),
+            "vpn": vpn, "pairs": pairs}
     _NET_CACHE.update(at=now, data=data)
     return data
+
+
+# Адреса, до которых телефон из Wi-Fi достучаться не может в принципе: петлобак, адрес без
+# DHCP (link-local) и адрес раздачи интернета Windows (ICS / мобильный хот-спот).
+_LAN_BAD_PREFIXES = ('127.', '169.254.', '192.168.137.')
+# Описания адаптеров-«недомашних»: туннели и виртуальные адаптеры. Берём из описания, а не
+# только из диапазона, потому что у VPN бывает адрес и вида 192.168.x, а у Hyper-V — 172.x.
+_LAN_BAD_HINTS = ('vpn', 'wireguard', 'tailscale', 'zerotier', 'openvpn', 'tap-',
+                  'wi-fi direct', 'wifi direct', 'virtual adapter', 'bluetooth',
+                  'vethernet', 'hyper-v', 'loopback', 'wan miniport', 'ppp')
+
+
+def _udp_probe_ip():
+    """Адрес, с которым ОС сама пошла бы наружу (UDP-сокет ничего не отправляет)."""
+    for probe in (('8.8.8.8', 80), ('192.168.0.1', 80), ('10.0.0.1', 80)):
+        sk = None
+        try:
+            sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sk.settimeout(0.2)
+            sk.connect(probe)
+            ip = sk.getsockname()[0]
+            if ip and not ip.startswith('127.'):
+                return ip
+        except OSError:
+            pass
+        finally:
+            if sk is not None:
+                try:
+                    sk.close()
+                except OSError:
+                    pass
+    return None
 
 
 def _lan_ip():
@@ -176,26 +211,20 @@ def _lan_ip():
     по умолчанию» — это адрес туннеля (172.16.x.x), до которого телефон в Wi-Fi не достучится.
     Поэтому сначала берём обычные домашние диапазоны: 192.168.x → 10.x → 172.16-31.x, и только
     если ничего из этого нет — адрес туннеля. Наружу ничего не уходит: UDP-сокет лишь
-    «подключается», чтобы ядро показало исходящий адрес, пакет при этом не отправляется."""
-    udp = None
-    for probe in (('8.8.8.8', 80), ('192.168.0.1', 80), ('10.0.0.1', 80)):
-        sk = None
-        try:
-            sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sk.settimeout(0.2)
-            sk.connect(probe)
-            ip = sk.getsockname()[0]
-            if ip and not ip.startswith('127.'):
-                udp = ip
-                break
-        except OSError:
-            pass
-        finally:
-            if sk is not None:
-                try:
-                    sk.close()
-                except OSError:
-                    pass
+    «подключается», чтобы ядро показало исходящий адрес, пакет при этом не отправляется.
+
+    17.10.26 (разбор «на другом компьютере телефон не достучался до адреса из QR»): раньше
+    главный выбор делался по ПЕРВОМУ адаптеру в порядке PowerShell (nets["main"]), а порядок
+    этот ничем не защищён. Первым может встать виртуальный адаптер (Hyper-V / vEthernet,
+    Wi-Fi Direct, Bluetooth PAN), адрес раздачи Windows 192.168.137.1 или адрес без DHCP
+    169.254.x — телефон до него не дойдёт, и QR ведёт в никуда. Поэтому теперь:
+      • мусорные диапазоны (127.*, 169.254.*, 192.168.137.*) и адаптеры-туннели/виртуальные
+        (по описанию) отбрасываются сразу;
+      • из оставшихся берётся обычный домашний диапазон (192.168 → 10 → 172.16-31), а при
+        равных — адрес, которым ОС сама пошла бы наружу (он точно маршрутизируемый);
+      • «main» из разбора адаптеров — только если вообще ничего подходящего не нашлось.
+    """
+    udp = _udp_probe_ip()
     cands = [ip for ip in dict.fromkeys(_local_ips() + ([udp] if udp else []))
              if ip and not ip.startswith('127.')]
 
@@ -213,11 +242,25 @@ def _lan_ip():
         return 3
 
     try:
-        nets = _net_addresses()                     # домашним считаем НЕ кабельный адрес
-        if nets.get("main"):
-            return nets["main"]
+        nets = _net_addresses()
     except Exception:
-        pass
+        nets = {}
+    # адреса, до которых телефон из Wi-Fi не достучится: туннели + виртуальные адаптеры
+    bad = set(nets.get("vpn") or [])
+    for ip, desc in (nets.get("pairs") or []):
+        d = (desc or "").lower()
+        if any(k in d for k in _LAN_BAD_HINTS):
+            bad.add(ip)
+
+    def _ok(ip):
+        return bool(ip) and not ip.startswith(_LAN_BAD_PREFIXES) and ip not in bad
+
+    good = [ip for ip in cands if _ok(ip)]
+    if good:
+        return sorted(good, key=lambda ip: (_rank(ip), 0 if ip == udp else 1))[0]
+
+    if nets.get("main"):                            # ничего подходящего — прежний порядок
+        return nets["main"]
     if cands:
         return sorted(cands, key=_rank)[0]
     try:
