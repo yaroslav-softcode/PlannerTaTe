@@ -5,7 +5,7 @@
 ; Данные (граф, ключ) живут в %APPDATA%\PlannerTaTe и при удалении НЕ трогаются.
 
 #define AppName "PlannerTaTe"
-#define AppVersion "1.8"
+#define AppVersion "1.9"
 #define AppExe "PlannerTaTe.exe"
 #define AppPublisher "Ярослав Хмелев"
 

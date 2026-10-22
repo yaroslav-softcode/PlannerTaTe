@@ -692,6 +692,15 @@ class RectNode extends LGraphNode {
     ctx.fillStyle = tm.titleColor
     ctx.lineWidth = 1.3
     if (isHome) {
+      // Ярослав 23.10.26: «Дом» теперь можно РАСТЯГИВАТЬ — HOME_SIDE это МИНИМУМ. Глиф рисуем
+      // в его родной системе 84×84 и масштабируем к центру плитки: домик и стрелки растут
+      // вместе с ней и остаются по центру (раньше координаты были жёстко в пикселях).
+      const hk = Math.max(1, Math.min(w / HOME_SIDE, h / HOME_SIDE))
+      ctx.save()
+      ctx.translate(w / 2, h / 2)
+      ctx.scale(hk, hk)
+      ctx.translate(-HOME_SIDE / 2, -HOME_SIDE / 2)
+      const hcx = HOME_SIDE / 2
       if (!homeBg) {
       // «Дом» — вариант Ярослава 09.10.26: крыша опущена ниже (свесы на середине высоты,
       // стены начинаются чуть выше линии свеса, скат проходит вплотную над углами стен).
@@ -701,25 +710,25 @@ class RectNode extends LGraphNode {
       const roofHalf = 24, wallHalf = 17
       const wallTop = top + 20                            // стены чуть выше свеса
       ctx.beginPath()   // крыша со свесом (опущена)
-      ctx.moveTo(cx - roofHalf, eave); ctx.lineTo(cx, top); ctx.lineTo(cx + roofHalf, eave); ctx.stroke()
+      ctx.moveTo(hcx - roofHalf, eave); ctx.lineTo(hcx, top); ctx.lineTo(hcx + roofHalf, eave); ctx.stroke()
       ctx.beginPath()   // стены и пол
-      ctx.moveTo(cx - wallHalf, wallTop); ctx.lineTo(cx - wallHalf, base)
-      ctx.lineTo(cx + wallHalf, base); ctx.lineTo(cx + wallHalf, wallTop); ctx.stroke()
+      ctx.moveTo(hcx - wallHalf, wallTop); ctx.lineTo(hcx - wallHalf, base)
+      ctx.lineTo(hcx + wallHalf, base); ctx.lineTo(hcx + wallHalf, wallTop); ctx.stroke()
       ctx.beginPath()   // дверь по центру
-      ctx.moveTo(cx - 4.5, base); ctx.lineTo(cx - 4.5, base - 14)
-      ctx.lineTo(cx + 4.5, base - 14); ctx.lineTo(cx + 4.5, base); ctx.stroke()
+      ctx.moveTo(hcx - 4.5, base); ctx.lineTo(hcx - 4.5, base - 14)
+      ctx.lineTo(hcx + 4.5, base - 14); ctx.lineTo(hcx + 4.5, base); ctx.stroke()
       const ws = 8, wy = top + 26   // два окна
-      ctx.beginPath(); ctx.rect(cx - 14.5, wy, ws, ws); ctx.stroke()
-      ctx.beginPath(); ctx.rect(cx + 6.5, wy, ws, ws); ctx.stroke()
+      ctx.beginPath(); ctx.rect(hcx - 14.5, wy, ws, ws); ctx.stroke()
+      ctx.beginPath(); ctx.rect(hcx + 6.5, wy, ws, ws); ctx.stroke()
       }
       // «Синхронизация» в центре «Дома» (Ярослав 15.10.26): кнопка обновления (F5), значок №2.
       // С фоновой картинкой значок СКРЫТ (как глиф домика), зона клика остаётся активной.
       // Подложки и обводки НЕТ для всех тем (Ярослав 15.10.26): только стрелки акцентным цветом.
       if (!homeBg) {
-        const cy0 = h / 2 - HOME_REFRESH_DY
+        const cy0 = HOME_SIDE / 2 - HOME_REFRESH_DY
         const s = 13 / 24
         ctx.save()
-        ctx.translate(cx - 12 * s, cy0 - 12 * s); ctx.scale(s, s)
+        ctx.translate(hcx - 12 * s, cy0 - 12 * s); ctx.scale(s, s)
         ctx.lineWidth = 2.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
         ctx.strokeStyle = acc
         ctx.stroke(new Path2D('M3.51 9a9 9 0 0 1 14.85-3.36L23 10'))
@@ -728,6 +737,7 @@ class RectNode extends LGraphNode {
         ctx.beginPath(); ctx.moveTo(1, 20); ctx.lineTo(1, 14); ctx.lineTo(7, 14); ctx.stroke()
         ctx.restore()
       }
+      ctx.restore()                     // конец масштабирования глифа «Дома»
       this.tooltip = t('refreshTip')   // LiteGraph покажет подсказку при наведении
     } else if (isTab) {
       const bw = 28, bh = 21, bx = cx - bw / 2, by = 10
@@ -1317,11 +1327,29 @@ LGraphCanvas.prototype.processMouseDown = function (e) {
       }
     }
   }
+  // Ярослав 22.10.26: запоминаем нажатие правой кнопки: протяжка = рамка выделения,
+  // клик без движения = открыть панель (разбираем в processMouseUp).
+  this._ptRmb = (e.which === 3 && this.graph && !this.live_mode)
+    ? { x: e.canvasX, y: e.canvasY, moved: false }
+    : null
   return _origPMD.call(this, e)
 }
 const _origPMM = LGraphCanvas.prototype.processMouseMove
 LGraphCanvas.prototype.processMouseMove = function (e) {
   if (this.graph && this.adjustMouseEvent) this.adjustMouseEvent(e)   // canvasX/Y, см. выше
+  // Ярослав 22.10.26: рамка выделения правой кнопкой. Отвели больше ~6px от точки нажатия —
+  // начинаем штатную рамку LiteGraph (dragging_rectangle): библиотека сама её рисует и
+  // растягивает. Пока не отвели — это ещё «правый клик», и холст скроллится как обычно
+  // (начатый прокруткой drag гасим, иначе холст уедет вместе с рамкой).
+  const rmb = this._ptRmb
+  if (rmb && !rmb.moved && this.graph && !this.live_mode &&
+      (e.buttons === undefined || (e.buttons & 2)) &&   // правая кнопка всё ещё держится
+      Math.abs(e.canvasX - rmb.x) + Math.abs(e.canvasY - rmb.y) > 6) {
+    rmb.moved = true
+    this.dragging_rectangle = new Float32Array([rmb.x, rmb.y, 1, 1])
+    this.dragging_canvas = false
+    this.dirty_canvas = this.dirty_bgcanvas = true
+  }
   const rn = this.resizing_node, c = this._ptCorner
   if (rn && c && !(c[0] && c[1])) {
     this.resizing_node = null            // прячем наш угол от нативной ветки ресайза
@@ -1359,10 +1387,42 @@ LGraphCanvas.prototype.processMouseMove = function (e) {
 }
 const _origPMU = LGraphCanvas.prototype.processMouseUp
 LGraphCanvas.prototype.processMouseUp = function (e) {
+  const rmb = this._ptRmb
+  this._ptRmb = null
   const r = _origPMU.call(this, e)
   this._ptCorner = null; this._ptFixed = null
+  // Ярослав 22.10.26: отпустили правую кнопку. Если была протяжка — дорисована рамка:
+  // выделяем карточки внутри неё (а рамка на пустом месте — предложить создать область).
+  // Если не двигались — обычный правый клик: открыть панель под курсором (сам event
+  // contextmenu панель больше не открывает, чтобы не выпрыгивал из-под рамки).
+  if (rmb && e.which === 3) {
+    const rect = this.dragging_rectangle
+    this.dragging_rectangle = null
+    ptRmbUp = true                          // event contextmenu не должен дублировать
+    ptLastUp = { x: e.clientX, y: e.clientY }   // где именно отпустили — туда и панель
+    if (rmb.moved && rect && rect.length === 4 && Math.abs(rect[2]) + Math.abs(rect[3]) > 8)
+      ptMarqueeSelect(this, rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3])
+    else if (!rmb.moved)
+      openCanvasMenu(e)
+    this.setDirty(true, true)
+  }
   return r
 }
+
+// Ярослав 22.10.26: перемещение ВСЕГО выделения. Обвели рамкой правой кнопки несколько
+// карточек — теперь берём любую из них и едет вся группа: LiteGraph в processMouseMove
+// сдвигает все selected_nodes разом, но processNodeSelected по дороге сваливает выделение
+// в одну схваченную карточку. Если карточка уже в выделении — выделение не пересобираем
+// (выделение НЕвыделенной карточки и Ctrl+клик-переключение работают как раньше).
+;(() => {
+  const _origPNS = LGraphCanvas.prototype.processNodeSelected
+  LGraphCanvas.prototype.processNodeSelected = function (node, e) {
+    if (node && node.is_selected && this.selected_nodes && this.selected_nodes[node.id] &&
+        Object.keys(this.selected_nodes).length > 1 &&
+        e && !(e.shiftKey || e.ctrlKey || e.metaKey)) return
+    return _origPNS.call(this, node, e)
+  }
+})()
 // ПУСТОЙ заголовок карточки должен честно оставаться пустым и после перезагрузки. Библиотека
 // при загрузке графа подставляет в пустое поле имя класса: `configure` → `this.title =
 // this.constructor.title`, а registerNodeType выше записывает сюда `base_class.name`
@@ -1526,6 +1586,9 @@ async function initCanvas() {
   // библиотеке не реализован — его доводит src/touch.js.
   LiteGraph.pointerevents_method = 'pointer'
   liteCanvas = new LGraphCanvas(canvasEl.value, graph)
+  // Маячок для автопроверок (Иришка 22.10.26): доступ к графу/холсту из консоли DevTools.
+  window.__ptDebug = () => ({ g: graph, c: liteCanvas, ac: areaColor.value, ap: areaPanel.value, th: themeName.value,
+                             sq: searchQ.value, sh: searchHits.value.length })
   removeTouchSupport = installTouchSupport(canvasEl.value, liteCanvas)
   // Зум колесом: снимаем мёртвый библиотечный 'mousewheel' (иначе, если браузер пришлёт оба
   // события, холст прыгнет на двойной шаг) и ведём колесо сами по современному 'wheel'.
@@ -1604,7 +1667,7 @@ async function initCanvas() {
   // отпущенная перед упорядочиванием, не доехала обратно к старым позициям (15.10.26).
   document.addEventListener('dblclick', () => { dragFollow = null }, true)
   // правый клик по карточке — открыть редактирование в инспекторе
-  canvasEl.value.addEventListener('contextmenu', onContextMenu)
+  document.addEventListener('contextmenu', onContextMenu, true)
   // рисунки: перетаскивание файла прямо на карточку (Ctrl+V обрабатывается на уровне документа)
   canvasEl.value.addEventListener('dragover', onDragOver)
   canvasEl.value.addEventListener('drop', onCanvasDrop)
@@ -1767,6 +1830,11 @@ function applyCanvasTheme(lc) {
     // Рамку вокруг всей рабочей области убрали 01.10.26 (просьба Ярослава: «удали ещё границы,
     // которые вокруг всей области») — холст теперь ровный, сетка идёт по всей видимой части.
     drawThemeGrid(ctx, lc)
+
+    // Ярослав 22.10.26: цветные области (graph.extra.areas) — под карточками
+    ptDrawAreas(ctx, lc)
+    // Ярослав 23.10.26: подсветка найденных карточек
+    ptDrawSearchHits(ctx, lc)
   }
   // Связи: цвет — от узла-источника, свечение — из темы. Оборачиваем renderLink один раз.
   // Заодно меняем заводской кружок на середине связи: LiteGraph рисует его через ctx.arc,
@@ -2103,9 +2171,10 @@ function ensureDevicePanels() {
     n.kind = 'device'
     n.device = dev
     n.size = [side, side]
-    // 15.10.26 (просьба Ярослава): «Смартфон»/«Планшет» теперь МОЖНО растягивать за угол
-    // больше минимума 56×56 (пол — в computeSize); «Дом» остаётся фиксированным.
-    if (dev === 'home') n.resizable = false
+    // 15.10.26 (просьба Ярослава): «Смартфон»/«Планшет» можно растягивать за угол больше
+    // минимума 56×56 (пол — в computeSize). 23.10.26: «Дом» тоже тянется — HOME_SIDE (84)
+    // стал его МИНИМУМОМ, глиф масштабируется вместе с плиткой (см. drawDeviceTile).
+    n.resizable = true
     n.inputs = []                       // кольца нет — панель только источник связей
     if (dev === 'home') {
       // Четыре выхода: 0 — слева, 1 — справа, 2 — сверху, 3 — снизу (сторона в
@@ -2377,6 +2446,20 @@ function collectBase(node, kids, seen, out) {
     collectBase(c, kids, seen, out)
   }
 }
+
+// Ярослав 22.10.26: перетаскивание ВСЕГО мультивыделения (рамка правой кнопки). Выбранные
+// карточки едут вместе по штатной логике LiteGraph (processMouseMove сдвигает все
+// selected_nodes), поэтому «верёвочка» такой карточке не нужна — иначе её дети получили бы
+// двойное смещение. Остальным — обычная верёвка.
+function ropeFor(n) {
+  const sel = liteCanvas && liteCanvas.selected_nodes
+  if (n.is_selected && sel && sel[n.id] && Object.keys(sel).length > 1)
+    return { id: n.id, lastPos: [n.pos[0], n.pos[1]], kids: new Map(), base: new Map(), targets: new Map() }
+  const kids = buildChildrenMap()
+  const base = new Map()
+  collectBase(n, kids, new Set(), base)
+  return { id: n.id, lastPos: [n.pos[0], n.pos[1]], kids, base, targets: new Map() }
+}
 // Финал «верёвочки»: когда ветка сошлась, ставим позиции РОВНО по целям. Цели считаем от
 // ТЕКУЩЕЙ позиции родителя (LiteGraph на отпускании округляет её) — поэтому в покое смещения
 // потомков совпадают с исходными до пикселя и длина связи та же, что была до перетаскивания.
@@ -2399,6 +2482,12 @@ function finishFollow() {
 // совпадает с движением родителя пиксель в пиксель, чем бы ни двигался сам LiteGraph.
 let dragFollow = null   // { id, lastPos: [x, y], kids, base, targets }
 function onCanvasMouseDown(ev) {
+  // Ярослав 22.10.26: любой левый клик прячет панели областей (превью и панель области)
+  if (ev.button === 0 && (areaPanel.value || areaEdit.value)) {
+    areaPanel.value = null
+    areaEdit.value = null
+    if (liteCanvas) liteCanvas.setDirty(true, true)
+  }
   if (ev.button !== 0) return
   dragFollow = null
   if (!liteCanvas || !graph) return
@@ -2421,10 +2510,7 @@ function onCanvasMouseDown(ev) {
     try { n = graph.getNodeOnPos(mx, my) } catch (e) {}
   }
   if (!n) return
-  const kids = buildChildrenMap()
-  const base = new Map()
-  collectBase(n, kids, new Set(), base)
-  dragFollow = { id: n.id, lastPos: [n.pos[0], n.pos[1]], kids, base, targets: new Map() }
+  dragFollow = ropeFor(n)
 }
 // Ctrl+клик по карточке — её копия рядом (просьба Ярослава 01.10.26: «чтобы она копировалась»).
 // Слушаем на документе в фазе ПЕРЕХВАТА: событие не дойдёт до обработчиков холста, поэтому
@@ -2449,10 +2535,7 @@ function onDocMouseMove() {
   if (!dragFollow || dragFollow.id !== dragged.id) {
     // Подстраховка, если mousedown прошёл мимо (например, перетаскивание начал сам LiteGraph):
     // принимаем текущее положение за точку отсчёта, цели посчитаем на следующем движении.
-    const kids = buildChildrenMap()
-    const base = new Map()
-    collectBase(dragged, kids, new Set(), base)
-    dragFollow = { id: dragged.id, lastPos: [dragged.pos[0], dragged.pos[1]], kids, base, targets: new Map() }
+    dragFollow = ropeFor(dragged)
     return
   }
   dragFollow.lastPos = [dragged.pos[0], dragged.pos[1]]
@@ -2467,7 +2550,191 @@ function onDocMouseUp() {
   if (dragFollow && !dragFollow.targets.size) finishFollow()
 }
 
-// --- Файлы-ссылки на карточке -----------------------------------------------
+// --- Рамка выделения правой кнопкой и цветные области (Ярослав 22.10.26) -----------
+// Зажать правую кнопку мыши и протянуть — штатная рамка выделения LiteGraph
+// (dragging_rectangle): библиотека сама её рисует и растягивает, а обёртка
+// processMouseUp решает по итогам отпускания: карточки внутри рамки выделяются —
+// после этого вся выделенная группа перемещается вместе (схвачена любая карточка:
+// processMouseMove LiteGraph сдвигает все selected_nodes; обёртка
+// processNodeSelected не даёт выделению «схлопнуться», ropeFor отключает верёвочку).
+// Если рамка прошла по пустому месту (ни одной карточки внутри) — в правом верхнем
+// углу экрана появляется кнопка «Создать область» с палитрой из шести цветов.
+// Область — полупрозрачный прямоугольник на холсте, НЕ карточка: живёт в
+// graph.extra.areas, рисуется под карточками (onDrawBackground), сохраняется вместе
+// с графом (saveGraph отдаёт graph.serialize() как есть — extra входит) и не мешает
+// выделять и перемещать карточки. Правый клик по готовой области открывает панель
+// «сменить цвет / удалить» (Ярослав 22.10.26: вместо двойного клика).
+let ptRmbUp = false       // правый клик разобран на отпускании — event contextmenu не должен дублировать
+let ptLastUp = null       // экранные координаты отпускания правой кнопки — панели ставим у курсора
+const areaPanel = ref(null)        // рамка на пустом месте { x, y, w, h } в координатах графа
+const areaEdit = ref(null)         // правый клик по готовой области: { r, color, px, py } — панель «цвет / удалить» у курсора
+const areaColor = ref('#3f7fd6')
+// Ярослав 23.10.26: палитра расширена до десяти цветов.
+const AREA_COLORS = [
+  '#d0454c', '#d98f2b', '#d9c04a', '#7aa93c', '#3fa66a',
+  '#2fa5a0', '#3f7fd6', '#6a6fd8', '#a05fd0', '#cf5fa8',
+]
+
+// Куда поставить всплывающую панель у курсора (Ярослав 23.10.26): обычно чуть правее-ниже
+// клика, а если там не помещается — зеркально слева/сверху. Так панель всегда РЯДОМ с мышью,
+// а не в углу экрана.
+function ptMenuPos(x, y, w = 172, h = 175) {
+  let px = x + 8
+  let py = y + 8
+  if (px + w > window.innerWidth - 8) px = Math.max(8, x - w - 8)
+  if (py + h > window.innerHeight - 8) py = Math.max(8, y - h - 8)
+  return { px, py }
+}
+
+// Клик по свотчу в панели «Создать область»: цвет применяется к РАМКЕ-превью сразу
+// (Ярослав 23.10.26 — просил предпросмотр до нажатия «Создать область»).
+function pickAreaColor(c) {
+  areaColor.value = c
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+}
+
+function ensureAreas() {
+  if (!graph) return []
+  if (!graph.extra || typeof graph.extra !== 'object') graph.extra = {}
+  if (!Array.isArray(graph.extra.areas)) graph.extra.areas = []
+  return graph.extra.areas
+}
+
+// В какой области точка (при наложении — та, что рисуется выше, т.е. последняя).
+function ptAreaHit(gx, gy) {
+  const arr = ensureAreas()
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const r = arr[i]
+    if (r && r.w > 0 && r.h > 0 && gx >= r.x && gx <= r.x + r.w && gy >= r.y && gy <= r.y + r.h)
+      return { r, i }
+  }
+  return null
+}
+
+// Выделение рамкой: захвачены карточки — выделяем; пустая рамка — панель создания области.
+function ptMarqueeSelect(lc, x0, y0, x1, y1) {
+  const a = Math.min(x0, x1), b = Math.max(x0, x1)
+  const c = Math.min(y0, y1), d = Math.max(y0, y1)
+  areaPanel.value = null
+  areaEdit.value = null
+  const hit = []
+  for (const n of (graph._nodes || [])) {
+    if ((n.kind || 'task') === 'device') continue     // системные плитки не участвуют
+    const w = n.size ? n.size[0] : 0, h = n.size ? n.size[1] : 0
+    if (n.pos[0] + w >= a && n.pos[0] <= b && n.pos[1] + h >= c && n.pos[1] <= d) hit.push(n)
+  }
+  if (hit.length) {
+    // Новая рамка заменяет прежнее выделение. Флаг этой сборки LiteGraph — is_selected:
+    // без него ветка перетаскивания считает карточки «не выделенными» и по дороге
+    // пересобирает выделение в одну схваченную карточку (группа перестаёт ехать).
+    if (lc.deselectAllNodes) lc.deselectAllNodes()
+    for (const n of hit) {
+      n.is_selected = true
+      lc.selected_nodes[n.id] = n
+      if (n.onSelected) n.onSelected()
+    }
+    if (hit.length === 1) selectedNode.value = toRaw(hit[0])  // для одной карточки панель как обычно
+  } else {
+    areaPanel.value = {                                        // пустая рамка — предложим область
+      x: a, y: c, w: b - a, h: d - c,
+      // Ярослав 23.10.26: панель «Создать область» тоже у курсора (раньше стояла в углу экрана).
+      ...ptMenuPos(ptLastUp ? ptLastUp.x : 200, ptLastUp ? ptLastUp.y : 200),
+    }
+  }
+}
+
+function createArea() {
+  if (readOnly.value || !areaPanel.value) return
+  const p = areaPanel.value
+  ensureAreas().push({ x: p.x, y: p.y, w: p.w, h: p.h, color: areaColor.value })
+  areaPanel.value = null
+  areaEdit.value = null
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+  pushUndoStep()     // шаг отмены (Ярослав 23.10.26)
+  saveGraph(true)    // автосохранение следит только за карточками — области сохраняем сразу
+}
+
+// Правый клик по готовой области: сменить цвет (клик по образцу применяется сразу)
+// и удалить область кнопкой «Удалить». Панель закрывается левым кликом мимо.
+function areaPickColor(c) {
+  if (readOnly.value || !areaEdit.value) return
+  areaEdit.value.color = c
+  areaEdit.value.r.color = c
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+  pushUndoStep()     // шаг отмены (Ярослав 23.10.26)
+  saveGraph(true)
+}
+function areaDelete() {
+  if (readOnly.value || !areaEdit.value) return
+  const arr = ensureAreas()
+  // ref() оборачивает r в прокси — в массиве лежат сырые объекты, ищем через toRaw.
+  const i = arr.indexOf(toRaw(areaEdit.value.r))
+  if (i >= 0) arr.splice(i, 1)
+  areaEdit.value = null
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+  pushUndoStep()     // шаг отмены (Ярослав 23.10.26)
+  saveGraph(true)
+  flash(t('areaRemoved'))
+}
+
+// Области и их превью на фоновом холсте (под карточками): onDrawBackground вызывается
+// уже с применёнными трансформациями холста — координаты в пространстве графа.
+// Жёлтые кольца вокруг карточек, совпавших с поиском (Ярослав 23.10.26).
+function ptDrawSearchHits(ctx, lc) {
+  const hits = searchHits.value
+  if (!hits || !hits.length) return
+  const s = (lc.ds && lc.ds.scale) || 1
+  ctx.save()
+  ctx.strokeStyle = '#ffd166'
+  ctx.lineWidth = 3 / s
+  for (const n of hits) {
+    if (!n.pos) continue
+    const w = (n.size && n.size[0]) || 140
+    const h = (n.size && n.size[1]) || 56
+    if (ctx.roundRect) {
+      ctx.beginPath(); ctx.roundRect(n.pos[0] - 4, n.pos[1] - 4, w + 8, h + 8, 10); ctx.stroke()
+    } else ctx.strokeRect(n.pos[0] - 4, n.pos[1] - 4, w + 8, h + 8)
+  }
+  ctx.restore()
+}
+
+function ptDrawAreas(ctx, lc) {
+  const arr = (graph && graph.extra && graph.extra.areas) || null
+  const sc = (lc && lc.ds && lc.ds.scale) || 1
+  const rr = 10 / sc
+  const path = (x, y, w, h) => {
+    ctx.beginPath()
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, rr)
+    else ctx.rect(x, y, w, h)
+  }
+  if (arr) for (const r of arr) {
+    if (!r || !(r.w > 0) || !(r.h > 0)) continue
+    const col = r.color || '#3f7fd6'
+    ctx.save()
+    ctx.fillStyle = rgba(col, 0.13)          // полупрозрачная заливка: карточки поверх читаются
+    ctx.strokeStyle = rgba(col, 0.5)
+    ctx.lineWidth = 1.5 / sc
+    path(r.x, r.y, r.w, r.h)
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+  }
+  const p = areaPanel.value                  // превью ещё не созданной области
+  if (p) {
+    ctx.save()
+    ctx.globalAlpha = 0.7
+    ctx.fillStyle = rgba(areaColor.value, 0.10)
+    ctx.strokeStyle = rgba(areaColor.value, 0.8)
+    ctx.lineWidth = 1.2 / sc
+    ctx.setLineDash([6 / sc, 4 / sc])
+    path(p.x, p.y, p.w, p.h)
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+  }
+}
+
+// --- Файлы-ссылки на карточке -------------------------------------------------------
 // Ярослав 03.10.26: в карточке хранится ТОЛЬКО ПУТЬ к файлу (сами файлы не копируются),
 // а по клику на значок файл открывается стандартной программой системы.
 const MAX_FILES = 5   // максимум ссылок на файлы в одной карточке (Ярослав 03.10.26)
@@ -2557,13 +2824,18 @@ function drawRepeatIcon(ctx, mode, cx, cy, s, ink, cut) {
   const X = (v) => x + s * v / 24
   const Y = (v) => y + s * v / 24
   ctx.save()
-  // Квадрат-плашка: чернильный цвет темы.
-  ctx.fillStyle = ink
+  // Ярослав 23.10.26: на СВЕТЛЫХ темах плашка инвертируется — светлый фон карточки и тёмный
+  // значок (было наоборот: светлый значок на почти чёрном квадрате и смотрелось чужеродно).
+  const inv = !!theme().light
+  const bg = inv ? cut : ink      // фон плашки
+  const fg = inv ? ink : cut      // сам значок
+  // Квадрат-плашка: чернильный цвет темы (на светлых — фон карточки).
+  ctx.fillStyle = bg
   roundRect(ctx, X(3), Y(3), s * 18 / 24, s * 18 / 24, s * 5.5 / 24)
   ctx.fill()
-  // Всё рисуемое сверху — «вырезка» (цвет фона карточки).
-  ctx.fillStyle = cut
-  ctx.strokeStyle = cut
+  // Всё рисуемое сверху — «вырезка» (цвет фона карточки), на светлых темах — чернила.
+  ctx.fillStyle = fg
+  ctx.strokeStyle = fg
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   if (mode === 'daily') {
@@ -3129,17 +3401,47 @@ async function sendFilesToDevice(node, files) {
 }
 
 // Правый клик по карточке: выделить её и открыть inspector с автофокусом на задачу.
+// Ярослав 22.10.26: панель больше не открывается из этого события — браузер шлёт contextmenu
+// сразу при нажатии правой кнопки, и при протяжке рамки выделения панель выпрыгивал из-под
+// рамки. Обработчик только глушит системное меню; панель открывается на отпускании кнопки
+// (обёртка processMouseUp → openCanvasMenu).
+// Правый клик: карточки и панели нарисованы/разложены поверх canvas, поэтому системное меню
+// глушим для ВСЕЙ поверхности приложения (Ярослав 23.10.26: «по карточке вылезает меню
+// Перезагрузить/Печать — этого быть не должно»), а не только когда target === canvas:
+// раньше клик по оверлею (панель карточки, меню области) не гасил меню браузера.
+// В полях ввода системное меню оставляем — там нужны «Вставить»/«Копировать».
 function onContextMenu(ev) {
-  // Правый клик — единственный способ открыть панель (левый клик по карточке её не трогает).
-  if (!graph || !liteCanvas) return
-  const target = ev.target && ev.target.closest ? ev.target.closest('canvas') : null
-  if (target !== canvasEl.value) return
+  const el = ev.target
+  if (el && el.closest && el.closest('input,textarea,select,[contenteditable="true"]')) return
+  if (!el || !el.closest || !el.closest('.app')) return
+  ev.preventDefault()
+  ev.stopPropagation()
+  if (ptRmbUp) ptRmbUp = false                   // клик уже разобран на отпускании — не дублируем
+}
+
+function openCanvasMenu(ev) {
   const [gx, gy] = screenToGraph(ev.clientX, ev.clientY)   // screenToGraph уже вычитает rect.left
   let found = null
   try {
     found = graph.getNodeOnPos(gx, gy)   // LiteGraph hit-test over _nodes (top-most wins)
   } catch (e) {}
-  if (!found) { homeMenu.value = null; return }
+  if (!found) {
+    homeMenu.value = null
+    // Ярослав 22.10.26: правый клик по цветной области — панель «сменить цвет / удалить».
+    const hit = readOnly.value ? null : ptAreaHit(gx, gy)
+    if (hit) {
+      areaPanel.value = null
+      // Ярослав 23.10.26: панель «цвет / удалить» появляется в точке клика (с поправкой,
+      // чтобы не вылезала за край окна).
+      areaEdit.value = {
+        r: hit.r,
+        color: hit.r.color || '#3f7fd6',
+        ...ptMenuPos(ev.clientX, ev.clientY, 172, 140),
+      }
+      if (liteCanvas) liteCanvas.setDirty(true, true)
+    } else areaEdit.value = null
+    return
+  }
   // Панель устройства: панель карточки для неё не открываем — системной плитке править нечего.
   if ((found.kind || 'task') === 'device') {
     ev.preventDefault(); ev.stopPropagation()
@@ -3572,7 +3874,15 @@ function graphSignature() {
   }
   return parts.join('\u001f') + '\u001e' + links.sort().join(',')
 }
-function armAutoSave() { lastGraphSig = graphSignature(); autoSaveArmed = true }
+function armAutoSave() {
+  lastGraphSig = graphSignature()
+  autoSaveArmed = true
+  // Ярослав 23.10.26: точка отсчёта для отмены — состояние после загрузки графа.
+  undoBase = graphSnapshot()
+  undoStack.length = 0
+  redoStack.length = 0
+  undoBytes = 0
+}
 let lastSigCheck = 0
 function watchAutoSave() {
   if (!autoSaveArmed || !graph) return
@@ -3583,7 +3893,135 @@ function watchAutoSave() {
   if (sig === lastGraphSig) return
   lastGraphSig = sig
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  autoSaveTimer = setTimeout(() => { autoSaveTimer = null; saveGraph(true) }, 600)
+  autoSaveTimer = setTimeout(() => { autoSaveTimer = null; pushUndoStep(); saveGraph(true) }, 600)
+}
+
+// ── Отмена / повтор действий (Ярослав 23.10.26) ─────────────────────────────
+// История — снимки graph.serialize(): так отменяются и карточки, и связи, и области.
+// Снимок пишется не на каждый кадр, а когда правка «устоялась» (тот же таймер, что
+// у автосохранения), поэтому перетаскивание даёт ОДИН шаг отмены, а не сотню.
+const UNDO_MAX = 40                        // шагов истории
+const UNDO_BYTES = 24 * 1024 * 1024        // предохранитель: карточки с картинками тяжёлые
+const undoStack = []
+const redoStack = []
+let undoBase = ''          // снимок стабильного состояния — его вернёт Ctrl+Z
+let undoBytes = 0
+let undoLock = false       // идёт восстановление — новые шаги не пишем
+
+function graphSnapshot() {
+  if (!graph) return ''
+  try { return JSON.stringify(graph.serialize()) } catch (e) { return '' }
+}
+
+function pushUndoStep() {
+  if (undoLock || !graph) return
+  const cur = graphSnapshot()
+  if (!cur) return
+  if (undoBase && undoBase !== cur) {
+    undoStack.push(undoBase)
+    undoBytes += undoBase.length
+    while (undoStack.length > UNDO_MAX || undoBytes > UNDO_BYTES) undoBytes -= undoStack.shift().length
+    redoStack.length = 0
+  }
+  undoBase = cur
+}
+
+function restoreSnapshot(json) {
+  undoLock = true
+  try {
+    const data = JSON.parse(json)
+    if (!data || !Array.isArray(data.nodes)) return false
+    data.nodes.forEach(normalizeNode)
+    graph.configure(data)          // configure сам чистит старый граф
+    for (const n of graph._nodes || []) if (isDeviceFileCard(n)) fitFileCard(n)
+    selectedNode.value = null
+    areaPanel.value = null
+    areaEdit.value = null
+    if (liteCanvas) {
+      if (liteCanvas.deselectAllNodes) liteCanvas.deselectAllNodes()
+      liteCanvas.setDirty(true, true)
+    }
+    graph.setDirtyCanvas(true, true)
+    lastGraphSig = graphSignature()
+    undoBase = json
+    runSearch()
+    saveGraph(true)                // отмена сразу уходит на сервер — телефон увидит то же
+    return true
+  } catch (e) { return false } finally {
+    setTimeout(() => { undoLock = false }, 200)
+  }
+}
+
+function doUndo() {
+  if (!graph) return
+  if (!undoStack.length) return flash(t('undoEmpty'))
+  const cur = graphSnapshot()
+  const prev = undoStack.pop()
+  undoBytes -= prev.length
+  redoStack.push(cur)
+  if (restoreSnapshot(prev)) flash(t('undoDone'))
+}
+
+function doRedo() {
+  if (!graph) return
+  if (!redoStack.length) return flash(t('redoEmpty'))
+  const cur = graphSnapshot()
+  const next = redoStack.pop()
+  undoStack.push(cur)              // текущее — обратно в историю
+  undoBytes += cur.length
+  if (restoreSnapshot(next)) flash(t('redoDone'))
+}
+
+// ── Поиск по карточкам (Ярослав 23.10.26) ───────────────────────────────────
+// Ctrl+F открывает окно поиска: совпавшие карточки подсвечиваются жёлтым кольцом
+// на холсте, в списке — прыжок к карточке по клику (центрирует вид и открывает её).
+const searchOpen = ref(false)
+const searchQ = ref('')
+const searchHits = ref([])
+const searchInput = ref(null)
+
+function runSearch() {
+  const q = searchQ.value.trim().toLowerCase()
+  if (!q || !graph) { searchHits.value = []; if (liteCanvas) liteCanvas.setDirty(true, true); return }
+  const out = []
+  for (const n of graph._nodes || []) {
+    if ((n.kind || 'task') === 'device') continue        // плитки «Дом»/«Смартфон» не ищем
+    const tt = String(n.title || '').toLowerCase()
+    const dd = String(n.description || '').toLowerCase()
+    if (tt.includes(q) || dd.includes(q)) out.push(n)
+    if (out.length >= 50) break
+  }
+  searchHits.value = out
+  // Холст перерисовываем сразу: иначе жёлтые кольца появляются только со следующим
+  // изменением графа (найдено автотестом 23.10.26).
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+}
+
+function openSearch() {
+  searchOpen.value = true
+  nextTick(() => {
+    if (searchInput.value) { searchInput.value.focus(); searchInput.value.select() }
+  })
+}
+
+// Закрытие поиска полностью сбрасывает его состояние (Ярослав 23.10.26): иначе текст
+// оставался в поле, а жёлтые кольца продолжали висеть на карточках.
+function closeSearch() {
+  searchOpen.value = false
+  searchQ.value = ''
+  searchHits.value = []
+  if (liteCanvas) liteCanvas.setDirty(true, true)   // перерисовать холст без подсветки
+}
+
+function jumpToNode(n) {
+  if (!n || !liteCanvas) return
+  liteCanvas.centerOnNode(n)
+  if (liteCanvas.selectNode) liteCanvas.selectNode(n, false)
+  else { n.is_selected = true; liteCanvas.selected_nodes[n.id] = n }
+  // Ярослав 23.10.26: прыжок из поиска только ПОКАЗЫВАЕТ карточку — панель редактирования
+  // не открываем (раньше здесь выставлялся selectedNode, и выезжал инспектор).
+  selectedNode.value = null
+  liteCanvas.setDirty(true, true)
 }
 
 // Возвращает true, если сохранённый граф найден и загружен.
@@ -3605,7 +4043,7 @@ async function loadGraph() {
     let autoFixSeen = false
     for (const n of graph._nodes || []) {
       const kind = n.kind || 'task'
-      if (kind === 'device') { n.resizable = (n.device !== 'home'); continue }
+      if (kind === 'device') { n.resizable = true; continue }   // «Дом» тоже тянется (23.10.26)
       if (kind !== 'notify') continue
       // Дубли каналов (Ярослав 15.10.26: «на телефоне, на планшете и ещё раз на планшете»):
       // телефон прислал список с повтором — оставляем каждый канал один раз.
@@ -3889,6 +4327,13 @@ function flash(msg) {
 }
 
 window.addEventListener('keydown', (ev) => {
+  const inField = !!(ev.target && ev.target.matches && ev.target.matches('input,textarea,[contenteditable="true"]'))
+  // Ярослав 23.10.26: отмена/повтор (Ctrl+Z / Ctrl+Y) и поиск (Ctrl+F). В поле ввода
+  // Ctrl+Z отдаём браузеру — там своя отмена текста.
+  if ((ev.ctrlKey || ev.metaKey) && ev.code === 'KeyF') { ev.preventDefault(); openSearch(); return }
+  if ((ev.ctrlKey || ev.metaKey) && ev.code === 'KeyZ' && !ev.shiftKey && !inField) { ev.preventDefault(); doUndo(); return }
+  if ((ev.ctrlKey || ev.metaKey) && (ev.code === 'KeyY' || (ev.code === 'KeyZ' && ev.shiftKey)) && !inField) { ev.preventDefault(); doRedo(); return }
+  if (ev.key === 'Escape' && searchOpen.value) { closeSearch(); return }
   if (ev.key === 'Escape' && showCalendar.value) { showCalendar.value = false; return }
   if (ev.key === 'Escape' && descReaderNode.value) { descReaderNode.value = null; return }
   if (ev.key === 'Escape' && viewImage.value) { viewImage.value = ''; return }
@@ -4156,6 +4601,48 @@ onBeforeUnmount(() => {
     <div v-if="homeMenu" class="home-menu" :style="{ left: homeMenu.x + 'px', top: homeMenu.y + 'px' }">
       <button @click="homeAddBackground"><span class="hm-ico">🖼</span>{{ t('homeBgAdd') }}</button>
       <button :disabled="!homeMenu.node.image" @click="homeRemoveBackground"><span class="hm-ico">✕</span>{{ t('homeBgRemove') }}</button>
+    </div>
+
+    <!-- Ярослав 23.10.26: окно поиска по карточкам (Ctrl+F). Совпавшие подсвечиваются
+         на холсте жёлтым кольцом, клик по строке — прыжок к карточке. -->
+    <div v-if="searchOpen" class="search-box">
+      <div class="sb-head">
+        <input ref="searchInput" v-model="searchQ" class="sb-input" :placeholder="t('searchPh')"
+               @input="runSearch" @keydown.enter.prevent="jumpToNode(searchHits[0])" />
+        <button class="sb-close" :aria-label="t('searchClose')" @click="closeSearch">×</button>
+      </div>
+      <div v-if="searchQ.trim()" class="sb-list">
+        <button v-for="n in searchHits" :key="n.id" class="sb-item" @click="jumpToNode(n)">
+          <span class="sb-t">{{ n.title || t('taskTitle') }}</span>
+          <span v-if="n.description" class="sb-d">{{ n.description }}</span>
+        </button>
+        <div v-if="!searchHits.length" class="sb-empty">{{ t('searchNothing') }}</div>
+      </div>
+    </div>
+
+    <!-- Ярослав 22.10.26: панель рамки правой кнопки по пустому месту: «Создать область»
+         + палитра цвета. Сама рамка (пунктирный прямоугольник) рисуется на холсте. -->
+    <div v-if="areaPanel" class="area-menu" :style="{ left: areaPanel.px + 'px', top: areaPanel.py + 'px' }">
+      <div class="am-title">{{ t('areaCreate') }}</div>
+      <div class="am-swatches">
+        <button v-for="c in AREA_COLORS" :key="c" class="am-swatch"
+                :class="{ on: areaColor === c }" :style="{ background: c }"
+                :aria-label="c" @click="pickAreaColor(c)"></button>
+      </div>
+      <button class="am-create" :disabled="readOnly" @click="createArea">{{ t('areaCreate') }}</button>
+      <div class="am-hint">{{ t('areaHint') }}</div>
+    </div>
+
+    <!-- Ярослав 22.10.26: правый клик по готовой области — сменить цвет (образец
+         применяется сразу) или удалить кнопкой «Удалить область». -->
+    <div v-if="areaEdit" class="area-menu" :style="{ left: areaEdit.px + 'px', top: areaEdit.py + 'px' }">
+      <div class="am-title">{{ t('areaEditTitle') }}</div>
+      <div class="am-swatches">
+        <button v-for="c in AREA_COLORS" :key="c" class="am-swatch"
+                :class="{ on: areaEdit.color === c }" :style="{ background: c }"
+                :aria-label="c" @click="areaPickColor(c)"></button>
+      </div>
+      <button class="am-create am-del" :disabled="readOnly" @click="areaDelete">{{ t('areaDelete') }}</button>
     </div>
 
     <!-- Окно первого запуска: предлагаем поставить приложение на телефон -->

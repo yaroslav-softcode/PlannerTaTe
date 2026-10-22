@@ -381,6 +381,15 @@ def _net_guard():
 @app.after_request
 def _remember_key(resp):
     """Ключ пришёл ссылкой ?key=... — запоминаем куку, чтобы страница работала целиком."""
+    # Иришка 23.10.26: страницу НЕ кэшируем. Иначе после обновления приложения браузер
+    # показывает старый интерфейс (Ярослав ловил «меню не в той точке» на старой странице).
+    try:
+        if resp.mimetype == 'text/html':
+            resp.headers['Cache-Control'] = 'no-store, must-revalidate'
+            resp.headers['Pragma'] = 'no-cache'
+            resp.headers['Expires'] = '0'
+    except Exception:
+        pass
     if not _is_local() and request.args.get('key'):
         want = _access_key()
         if hmac.compare_digest(str(request.args['key']), str(want)) and not request.cookies.get('plannertate_key'):
