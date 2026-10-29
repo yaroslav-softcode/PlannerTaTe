@@ -2,7 +2,7 @@
 
 **Free private task planner where your plan is a map, not a list.** Tasks live as cards on an endless canvas, and you link them into a graph — so you can see what a project is made of, what depends on what, and what is in progress right now.
 
-Windows desktop application + Android companion, connected over your own home network. Everything is stored locally: no cloud, no account, no telemetry.
+Windows desktop application + Android companion, connected over your own home network. Everything is stored locally: no cloud, no account, no telemetry. Phone sync works without the internet — over a Wi-Fi router or a cable.
 
 ![The plan](screenshots/plan_en.png)
 
@@ -13,6 +13,8 @@ Windows desktop application + Android companion, connected over your own home ne
 **Does not let you forget.** A card can carry a due date and a reminder: at the chosen time the computer shows a Windows notification, and your phone (or tablet) rings like a real alarm — even when the app is closed or the device has been restarted.
 
 **Keeps the devices in step.** The phone app holds a copy of the plan (you can read it without the computer) and can add new tasks; on sync everything is merged back into the computer.
+
+**The main advantage: private, and it syncs without the internet.** The planner needs no internet and no third-party servers — your phone and computer exchange data only inside your own network, over a Wi-Fi router or a cable (port 5001). Not a single card "travels away": no cloud, no account with the developer, no telemetry or analytics. Sync keeps working when your provider is down or you are somewhere without a connection. Network access is gated by an access key — only a device you dictated the key to can reach your plan.
 
 ## How it works
 
@@ -93,7 +95,7 @@ Until 29.10.2026 the source was offered under MIT — that text is kept in [LICE
 
 **Бесплатный приватный планировщик задач, в котором план — это карта.** Задачи живут карточками на бесконечном холсте, а вы соединяете их связями: видно, из чего состоит дело, что от чего зависит и что в работе прямо сейчас.
 
-Приложение для Windows и приложение-спутник для Android, связанные через вашу домашнюю сеть. Всё хранится локально: без облака, без учётной записи, без телеметрии.
+Приложение для Windows и приложение-спутник для Android, связанные через вашу домашнюю сеть. Всё хранится локально: без облака, без учётной записи, без телеметрии. Синхронизация телефона работает без интернета — по Wi-Fi роутеру или кабелю.
 
 ![План](screenshots/plan_ru.png)
 
@@ -104,6 +106,8 @@ Until 29.10.2026 the source was offered under MIT — that text is kept in [LICE
 **Не даёт забыть.** У карточки ставится срок и напоминание: в назначенный час компьютер показывает уведомление Windows, а телефон (или планшет) звонит настоящим будильником — даже если приложение закрыто или устройство перезагружалось.
 
 **Держит устройства в курсе.** Приложение на телефоне хранит копию плана (можно смотреть без компьютера) и умеет добавлять новые задачи; синхронизация с компьютером.
+
+**Главное преимущество — приватность и синхронизация без интернета.** Планеру не нужен интернет и чужие серверы: телефон и компьютер обмениваются данными только внутри вашей сети — через Wi-Fi роутер или кабель (порт 5001). Ни одна карточка никуда не «уезжает»: нет облака, нет аккаунта у разработчика, нет телеметрии и аналитики; синхронизация работает даже когда провайдер лежит или вы в дороге без связи. Доступ из сети закрыт ключом доступа — подключиться к вашему плану может только то устройство, которому вы сами продиктовали ключ.
 
 ## Как это работает
 
