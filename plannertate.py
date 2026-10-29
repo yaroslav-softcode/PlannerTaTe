@@ -143,13 +143,30 @@ def main():
     # Тихий запуск: при входе в Windows (ярлык автозапуска) и при проверках — без вкладки браузера.
     quiet = bool(os.environ.get("PLANNERTATE_NO_BROWSER")) or "--quiet" in sys.argv
 
-    def open_page(*_):
-        if not quiet:
-            webbrowser.open(page)
+    def open_page(*_, force=True):
+        """Открыть страницу в браузере.
+
+        quiet гасит ТОЛЬКО автоматическое открытие при тихом старте (--quiet из автозапуска).
+        Нажатие в трее всегда открывает страницу: иначе при тихом старте кнопка «молчит».
+        """
+        if force or not quiet:
+            ok = False
+            try:
+                ok = webbrowser.open(page)
+            except Exception as e:
+                print("браузер не открылся через webbrowser: %r" % e)
+            if not ok:
+                # запасной путь для собранного exe без консоли: отдать адрес оболочке Windows
+                try:
+                    os.startfile(page)
+                    ok = True
+                except Exception as e:
+                    print("браузер не открылся через os.startfile: %r" % e)
+            print("открываю страницу: %s | получилось: %s" % (page, ok))
 
     if _port_busy(port):
         print("[%s] уже запущен на порту %d — открываю страницу" % (APP_TITLE, port))
-        open_page()
+        open_page(force=not quiet)   # повторный тихий старт вкладку не открывает
         return 0
 
     _make_shortcuts()
@@ -224,7 +241,7 @@ def main():
     tray.show()
 
     print("значок в трее поставлен, страница: %s" % page)
-    QtCore.QTimer.singleShot(1200, open_page)
+    QtCore.QTimer.singleShot(1200, lambda: open_page(force=False))
     if not quiet:
         QtCore.QTimer.singleShot(2000, lambda: tray.showMessage(
             APP_TITLE, "Приложение работает. Планера — в трее, рядом с часами.",

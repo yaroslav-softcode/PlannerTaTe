@@ -1,3 +1,15 @@
+Licensing note
+==============
+
+This licence (MIT) covers the SOURCE CODE of PlannerTaTe.
+
+The compiled Windows build (PlannerTaTe.exe, PlannerTaTe_Setup_*.exe) bundles PyQt5, which is
+licensed under GNU GPL v3. The binary as a whole is therefore distributed under GNU GPL v3 —
+see LICENSE-GPLv3.txt. The complete corresponding source is this repository.
+Component list: THIRD_PARTY_NOTICES.md.
+
+---
+
 MIT License
 
 Copyright (c) 2026 Yaroslav Khmelev

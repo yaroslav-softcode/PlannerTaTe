@@ -56,6 +56,11 @@ Name: "autostart"; Description: "{cm:autostart}"; GroupDescription: "{cm:tasksgr
 [Files]
 Source: "dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "app\PlannerTaTe.apk"; DestDir: "{app}\app"; Flags: ignoreversion
+; Лицензии кладём рядом с программой: в сборке есть PyQt5 под GPL v3,
+; значит текст GPL v3 и список компонентов должны ехать вместе с бинарником.
+Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "LICENSE-GPLv3.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 ; Файлы MCP-сервера (для кнопки «Установить MCP на Гермес», 06.10.26): кладём рядом с программой,
 ; чтобы комплект был полным даже без папки проекта. Сам сервер работает с боевым графом из %APPDATA%.
 Source: "mcp\plannertate_mcp.py"; DestDir: "{app}\mcp"; Flags: ignoreversion
