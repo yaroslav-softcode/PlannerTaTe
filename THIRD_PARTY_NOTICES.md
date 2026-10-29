@@ -4,14 +4,14 @@
 
 ## Что важно знать
 
-- **Исходный код PlannerTaTe** распространяется под **MIT** (см. [LICENSE](LICENSE)).
-- **Собранное приложение для Windows** (`PlannerTaTe.exe`, установщик `PlannerTaTe_Setup_*.exe`)
-  включает **PyQt5**, распространяемый под **GNU GPL v3**. Поэтому двоичная сборка **целиком
-  распространяется под GNU GPL v3**, а не под MIT. Текст лицензии — [LICENSE-GPLv3.txt](LICENSE-GPLv3.txt).
-- Исходный код, соответствующий двоичной сборке, доступен в этом репозитории:
-  <https://github.com/yaroslav-softcode/PlannerTaTe> — этого требует GPL v3.
-- Приложение для Android (`app/PlannerTaTe.apk`) под GPL не попадает: в нём нет PyQt5,
-  только Apache-2.0 компоненты (см. таблицу).
+- **Весь проект PlannerTaTe — и исходный код, и собранное приложение — распространяется под
+  GNU GPL v3** (текст в [LICENSE](LICENSE)). Причина: сборка включает **PyQt5** (Riverbank Computing),
+  распространяемый под GPL v3. Ранее исходники были под MIT — прежний текст сохранён в
+  [LICENSE-MIT.txt](LICENSE-MIT.txt) только как справка.
+- Полный соответствующий исходный код любой выпущенной сборки — этот репозиторий:
+  <https://github.com/yaroslav-softcode/PlannerTaTe> (этого требует GPL v3).
+- Приложение для Android (`app/PlannerTaTe.apk`) под GPL-ограничениями PyQt5 не попадает: в нём
+  нет PyQt5, только Apache-2.0 компоненты (см. таблицу).
 
 ## Компоненты в сборке для Windows
 
@@ -58,11 +58,12 @@ Inno Setup 6 — лицензия разрешает использование 
 
 # Third-party components (English)
 
-- **PlannerTaTe source code** is licensed under **MIT** (see [LICENSE](LICENSE)).
-- **The Windows build** (`PlannerTaTe.exe`, `PlannerTaTe_Setup_*.exe`) bundles **PyQt5**, which is
-  licensed under **GNU GPL v3**. The binary as a whole is therefore distributed under **GPL v3**,
-  not MIT. Full text: [LICENSE-GPLv3.txt](LICENSE-GPLv3.txt). The complete corresponding source
-  code of the released build is this repository (<https://github.com/yaroslav-softcode/PlannerTaTe>).
+- **The whole PlannerTaTe project — source code and the compiled build alike — is licensed under
+  GNU GPL v3** (full text in [LICENSE](LICENSE)), because the build bundles **PyQt5** (Riverbank
+  Computing), which is GPL v3 software. The source used to be MIT; that old text is kept in
+  [LICENSE-MIT.txt](LICENSE-MIT.txt) for reference only.
+- The complete corresponding source of every released build is this repository
+  (<https://github.com/yaroslav-softcode/PlannerTaTe>), as GPL v3 requires.
 - The Android companion app contains no PyQt5 code: only Apache-2.0 components (Kotlin stdlib, AndroidX).
 
 License texts of the individual components are available at the links in the tables above.

@@ -83,9 +83,9 @@ Python 3.12 + Flask · Vue 3 + Vite + LiteGraph.js (canvas) · PyInstaller + Inn
 
 ## License
 
-**Source code:** MIT — see [LICENSE](LICENSE). © Yaroslav Khmelev.
+**GNU GPL v3** — the whole project: both the source code and the Windows build (the build bundles PyQt5, © Riverbank Computing, which is GPL v3 software). Full text in [LICENSE](LICENSE), component list in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The complete corresponding source of every released build is this repository. © Yaroslav Khmelev.
 
-**Windows build** (`PlannerTaTe.exe`, installer): **GNU GPL v3**. The build bundles PyQt5 (Riverbank Computing), which is licensed under GPL v3, so the binary as a whole is distributed under GPL v3 — full text in [LICENSE-GPLv3.txt](LICENSE-GPLv3.txt), component list in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The complete corresponding source of every released build is this repository.
+Until 29.10.2026 the source was offered under MIT — that text is kept in [LICENSE-MIT.txt](LICENSE-MIT.txt) for reference.
 
 ---
 
@@ -174,6 +174,6 @@ Python 3.12 + Flask · Vue 3 + Vite + LiteGraph.js (canvas) · PyInstaller + Inn
 
 ## Лицензия
 
-**Исходный код:** MIT — см. [LICENSE](LICENSE). © Ярослав Хмелев.
+**GNU GPL v3** — весь проект целиком: и исходный код, и сборка для Windows (в сборку входит PyQt5, © Riverbank Computing, под GPL v3). Полный текст в [LICENSE](LICENSE), состав компонентов в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Полный соответствующий исходный код каждой выпущенной сборки — этот репозиторий. © Ярослав Хмелев.
 
-**Сборка для Windows** (`PlannerTaTe.exe`, установщик): **GNU GPL v3**. В сборку входит PyQt5 (Riverbank Computing) под GPL v3, поэтому двоичный файл целиком распространяется под GPL v3 — полный текст в [LICENSE-GPLv3.txt](LICENSE-GPLv3.txt), состав компонентов в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Полный соответствующий исходный код каждой выпущенной сборки — этот репозиторий.
+До 29.10.2026 исходники распространялись под MIT — прежний текст сохранён в [LICENSE-MIT.txt](LICENSE-MIT.txt) для справки.
