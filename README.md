@@ -87,7 +87,7 @@ Python 3.12 + Flask · Vue 3 + Vite + LiteGraph.js (canvas) · PyInstaller + Inn
 
 **GNU GPL v3** — the whole project: both the source code and the Windows build (the build bundles PyQt5, © Riverbank Computing, which is GPL v3 software). Full text in [LICENSE](LICENSE), component list in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The complete corresponding source of every released build is this repository. © Yaroslav Khmelev.
 
-Until 29.10.2026 the source was offered under MIT — that text is kept in [LICENSE-MIT.txt](LICENSE-MIT.txt) for reference.
+Until 29.10.2026 the source was offered under MIT; that notice lives in the repository history (commit `a3f85f0`).
 
 ---
 
@@ -180,4 +180,4 @@ Python 3.12 + Flask · Vue 3 + Vite + LiteGraph.js (canvas) · PyInstaller + Inn
 
 **GNU GPL v3** — весь проект целиком: и исходный код, и сборка для Windows (в сборку входит PyQt5, © Riverbank Computing, под GPL v3). Полный текст в [LICENSE](LICENSE), состав компонентов в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Полный соответствующий исходный код каждой выпущенной сборки — этот репозиторий. © Ярослав Хмелев.
 
-До 29.10.2026 исходники распространялись под MIT — прежний текст сохранён в [LICENSE-MIT.txt](LICENSE-MIT.txt) для справки.
+До 29.10.2026 исходники распространялись под MIT; прежнее уведомление осталось в истории репозитория (коммит `a3f85f0`).
