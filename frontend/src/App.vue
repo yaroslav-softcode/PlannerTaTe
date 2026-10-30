@@ -1448,6 +1448,10 @@ watch(lang, (v) => {
   try { localStorage.setItem('plannertate_lang', code) } catch (e) {}
   document.documentElement.lang = code        // и сама страница объявляет свой язык
 }, { immediate: true })
+// Язык уезжает серверу (30.10.26, просьба Ярослава): страница установки по QR и сообщение
+// «Установить MCP на Гермес» печатаются на языке компьютера. Тот же POST, что и у темы
+// (на телефоне pushThemeToServer молчит — язык компьютера с телефона не меняется).
+watch(lang, () => pushThemeToServer(themeName.value))
 // Только просмотр (04.10.26, просьба Ярослава): на телефоне/планшете открывается СОХРАНЁННАЯ копия
 // страницы (origin appassets.androidplatform.net) — сохранить правки она всё равно не может, поэтому
 // поля карточки и кнопки «Сохранить/Удалить» там неактивны. На компьютере всё как было.
@@ -1782,7 +1786,7 @@ function pushThemeToServer(id) {
   try {
     fetch('/api/ui_state', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ theme: id, custom: customCfg() }),
+      body: JSON.stringify({ theme: id, custom: customCfg(), lang: (lang.value === 'en' ? 'en' : 'ru') }),
     }).catch(() => {})
   } catch (e) {}
 }
@@ -4390,7 +4394,7 @@ onMounted(() => {
   if (hadSavedTheme) pushThemeToServer(themeName.value)   // тему своего браузера отдаём телефону
   // Первый запуск после появления этой возможности: сервер темы ещё не знает — отдаём свою.
   fetch('/api/ui_state', { cache: 'no-store' }).then(r => r.json())
-    .then(s => { if (s && !s.theme) pushThemeToServer(themeName.value) }).catch(() => {})
+    .then(s => { if (s && (!s.theme || s.lang !== (lang.value === 'en' ? 'en' : 'ru'))) pushThemeToServer(themeName.value) }).catch(() => {})
   initCanvas().catch(e => console.error('[plannertate] init failed', e))
   document.addEventListener('mousedown', onDocMouseDownCloseHomeMenu, true)   // клик мимо меню «Дома» — закрыть
   loadLicense()                        // кнопку «Лицензия» показываем, только если её ещё не оплатили

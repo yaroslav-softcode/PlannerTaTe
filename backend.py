@@ -903,9 +903,49 @@ def ping():
 # Ссылка со ключом (?key=...&device=...) ведёт сюда: сначала скачать APK, потом — когда приложение
 # уже стоит — одной кнопкой открыть его с готовым адресом компьютера, ключом и типом устройства.
 # Так ключ не надо диктовать руками: он приезжает в QR-коде, а приложение подставляет его само.
-INSTALL_HTML = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
+def _ui_lang():
+    """Язык интерфейса компьютера ('en' | 'ru'). Фронтенд сообщает его серверу вместе с темой
+    (POST /api/ui_state, поле lang), сервер хранит в ui_state.json. По этому языку печатаются
+    страница установки по QR и сообщение «Установить MCP на Гермес» (просьба Ярослава 30.10.26).
+    Если язык ещё не сообщался — русский."""
+    try:
+        with open(UI_FILE, encoding='utf-8') as f:
+            return 'en' if str((json.load(f) or {}).get('lang') or '').strip().lower() == 'en' else 'ru'
+    except Exception:
+        return 'ru'
+
+
+# Тексты страницы установки по языку компьютера (30.10.26): раньше страница была только русской.
+INSTALL_T = {
+    'ru': {
+        'title': 'установка',
+        'sub': 'Установка на {DEV}. Компьютер в сети:',
+        'li1': 'Скачайте приложение и установите его (разрешите установку из этого источника).',
+        'li2': 'Вернитесь сюда и нажмите «Открыть и заполнить» — адрес и ключ подставятся сами.',
+        'open': 'Открыть и заполнить (адрес и ключ)',
+        'dl': 'Скачать приложение (APK)',
+        'nowarn': 'Файл приложения ещё не положен рядом с программой (папка app).',
+        'key': 'Ключ доступа:',
+        'foot': '{DEV} должен быть в той же сети Wi-Fi, что и компьютер.',
+        'phone': 'телефон', 'tablet': 'планшет',
+    },
+    'en': {
+        'title': 'install',
+        'sub': 'Install on your {DEV}. Computer on the network:',
+        'li1': 'Download the app and install it (allow installing from this source).',
+        'li2': 'Come back here and press "Open and fill in" — the address and key are filled for you.',
+        'open': 'Open and fill in (address and key)',
+        'dl': 'Download the app (APK)',
+        'nowarn': 'The app file is not placed next to the program (app folder) yet.',
+        'key': 'Access key:',
+        'foot': 'Your {DEV} must be on the same Wi-Fi network as the computer.',
+        'phone': 'phone', 'tablet': 'tablet',
+    },
+}
+
+INSTALL_HTML = """<!doctype html><html lang="{LANG}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PlannerTaTe — установка</title>
+<title>PlannerTaTe — {T_TITLE}</title>
 <style>
 body{font-family:system-ui,Segoe UI,sans-serif;background:#16181f;color:#eef;margin:0;padding:24px;line-height:1.5}
 .box{max-width:460px;margin:0 auto}
@@ -921,33 +961,40 @@ ol{color:#c7ccda;font-size:14px;padding-left:20px}
 .foot{margin-top:16px;color:#8b93a6;font-size:12px}
 </style></head><body><div class="box">
 <h1>PlannerTaTe</h1>
-<p class="sub">Установка на {DEV}. Компьютер в сети: <b>{HOST}</b></p>
+<p class="sub">{T_SUB} <b>{HOST}</b></p>
 <ol>
-<li>Скачайте приложение и установите его (разрешите установку из этого источника).</li>
-<li>Вернитесь сюда и нажмите «Открыть и заполнить» — адрес и ключ подставятся сами.</li>
+<li>{T_LI1}</li>
+<li>{T_LI2}</li>
 </ol>
 {DL}
-<a class="btn ghost" href="{INTENT}">Открыть и заполнить (адрес и ключ)</a>
-<div class="key">Ключ доступа: <b>{KEY}</b></div>
-<p class="foot">{DEV} должен быть в той же сети Wi-Fi, что и компьютер.</p>
+<a class="btn ghost" href="{INTENT}">{T_OPEN}</a>
+<div class="key">{T_KEY} <b>{KEY}</b></div>
+<p class="foot">{T_FOOT}</p>
 </div></body></html>"""
 
 
 def _install_page(has_apk):
     from urllib.parse import quote
+    L = INSTALL_T[_ui_lang()]
     device = 'tablet' if (request.args.get('device') or '').strip().lower() == 'tablet' else 'phone'
     key = (request.args.get('key') or '').strip() or _access_key()
     ip = _lan_ip()
     host_port = "%s:%d" % (ip, PORT)
-    dev_ru = 'планшет' if device == 'tablet' else 'телефон'
+    dev_word = L['tablet'] if device == 'tablet' else L['phone']
     fallback = "http://%s/apk?raw=1" % host_port
     intent = ("intent://setup?host=%s&port=%d&key=%s&device=%s"
               "#Intent;scheme=plannertate;package=com.plannertate.phone;"
               "S.browser_fallback_url=%s;end" % (ip, PORT, key, device, quote(fallback, safe='')))
-    dl = ('<a class="btn" href="/apk?raw=1">Скачать приложение (APK)</a>' if has_apk
-          else '<div class="warn">Файл приложения ещё не положен рядом с программой (папка app).</div>')
+    dl = ('<a class="btn" href="/apk?raw=1">%s</a>' % L['dl'] if has_apk
+          else '<div class="warn">%s</div>' % L['nowarn'])
     html = INSTALL_HTML
-    for a, b in (('{DEV}', dev_ru), ('{KEY}', key), ('{HOST}', host_port),
+    for a, b in (('{LANG}', 'en' if L is INSTALL_T['en'] else 'ru'),
+                 ('{T_TITLE}', L['title']),
+                 ('{T_SUB}', L['sub'].replace('{DEV}', dev_word)),
+                 ('{T_LI1}', L['li1']), ('{T_LI2}', L['li2']),
+                 ('{T_OPEN}', L['open']), ('{T_KEY}', L['key']),
+                 ('{T_FOOT}', L['foot'].replace('{DEV}', dev_word)),
+                 ('{KEY}', key), ('{HOST}', host_port),
                  ('{DL}', dl), ('{INTENT}', intent.replace('&', '&amp;'))):
         html = html.replace(a, b)
     return Response(html, mimetype='text/html')
@@ -2586,6 +2633,38 @@ def api_mcp_info():
             "Если чат однажды перестанет отвечать: проверь, что hermes_webhook_secret.txt лежит "
             "рядом с graph.json и совпадает с секретом подписки. После чистой переустановки приложения "
             "данные пересоздаются — файл секрета надо восстановить." % (server, graph))
+    # Английская версия сообщения (30.10.26, просьба Ярослава): при английском интерфейсе
+    # компьютера панель «Установить MCP на Гермес» отдаёт то же сообщение по-английски.
+    # Пути, команды и {text} — дословно как в русской версии.
+    if _ui_lang() == 'en':
+        text = ("Set up an MCP server for my PlannerTaTe app.\n"
+                "Server file: %s\n"
+                "It must work with my graph: %s\n"
+                "Register it in Hermes as an MCP server \"plannertate\" — so you get tools for my "
+                "tasks, files and the Hermes chat.\n"
+                "\n"
+                "Then set up the Hermes chat channel — without it, messages from the phone will not "
+                "reach you:\n"
+                "1. Check that the webhook platform is enabled and listens on port 8644 "
+                "(hermes webhook list will tell you; enable it if it is not yet on).\n"
+                "2. Generate a webhook secret — 64 hex characters (e.g. secrets.token_hex(32)).\n"
+                "3. Save it as the file hermes_webhook_secret.txt next to graph.json (in the app "
+                "data folder) — the app signs every message with it.\n"
+                "4. Create the Hermes subscription (keep {text} and the tool names in the prompt verbatim):\n"
+                "   hermes webhook subscribe plannertate-chat --deliver log --secret <SECRET> "
+                "--prompt \"The user sent a message from the Hermes chat of the PlannerTaTe app. "
+                "Its text: {text}. Read the context with the hermes_chat_read tool (MCP plannertate), "
+                "reply briefly and to the point in the user's language. REQUIRED final action — call "
+                "the hermes_chat_reply tool (MCP plannertate), otherwise the answer will not reach "
+                "the phone.\"\n"
+                "5. Restart the gateway: hermes gateway restart.\n"
+                "\n"
+                "Check: send a message to the Hermes chat from the phone — a reply should arrive "
+                "within ~15 seconds.\n"
+                "\n"
+                "If the chat ever stops answering: check that hermes_webhook_secret.txt sits next to "
+                "graph.json and matches the subscription secret. After a clean reinstall the app data "
+                "is recreated — the secret file must be restored." % (server, graph))
     return jsonify({"status": "ok", "installed": installed, "server": server,
                     "graph": graph, "hermes": hh, "text": text})
 
@@ -2650,7 +2729,8 @@ def api_ui_state():
                 state = json.load(f) or {}
         except Exception:
             state = {}
-        return jsonify({"theme": state.get("theme") or "", "custom": state.get("custom") or {}})
+        return jsonify({"theme": state.get("theme") or "", "custom": state.get("custom") or {},
+                        "lang": state.get("lang") or ""})
     data = request.get_json(silent=True) or {}
     theme = str(data.get("theme") or "").strip()
     state = {}
@@ -2663,6 +2743,10 @@ def api_ui_state():
         print("[тема] отказ: попытка задать тему с адреса", request.remote_addr)
         return jsonify({"status": "ignored", "reason": "not the owner machine"})
     state["theme"] = theme
+    # Язык интерфейса компьютера (30.10.26, просьба Ярослава): фронтенд присылает его вместе с
+    # темой; по этому языку сервер печатает страницу установки по QR и сообщение «Установить MCP».
+    if "lang" in data:
+        state["lang"] = 'en' if str(data.get("lang") or "").strip().lower() == 'en' else 'ru'
     # Настройки «Своей» темы (палитра, шрифт, жирность, заглавные): без них телефон показывал
     # «свою» тему пустой, с базовой палитрой и своим шрифтом (нашёл Ярослав 03.10.26).
     # Значение приходит из сети, поэтому берём только известные поля и приводим их к типу.
