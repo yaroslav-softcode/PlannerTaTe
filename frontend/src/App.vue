@@ -3825,12 +3825,18 @@ function normalizeNode(n) { normalizeVec(n, 'pos'); normalizeVec(n, 'size') }
 // автоматически сохранялось».
 let savingNow = false      // защита от гонки: автосохранение может стартовать, пока идёт предыдущее
 let pendingSave = false
+// Номера карточек, которые эта вкладка видела при загрузке (03.11.26). Сервер по ним понимает,
+// что пользователь удалил сам, а что создали другие (телефон, другая вкладка, MCP) уже ПОСЛЕ
+// загрузки, — и не даёт первому же автосохранению стереть чужое. После каждого сохранения
+// список обновляется: свои новые карточки вкладка «знает» и удалить их сможет.
+let baseIds = []
 async function saveGraph(silent = false) {
   if (savingNow) { pendingSave = true; return }   // второй запрос не шлём — перезапишем после первого
   savingNow = true
   try {
     const data = graph.serialize()
     if (Array.isArray(data.nodes)) data.nodes.forEach(normalizeNode)
+    data.baseIds = baseIds      // что вкладка знала при загрузке — сервер не даст стереть чужое
     // Явное сохранение (Ctrl+S, silent=false) — force: пользователь сознательно пишет
     // любой граф, даже если карточек стало резко меньше. Автосохранение — без force.
     const url = '/api/save' + (silent ? '' : '?force=1')
@@ -3840,6 +3846,12 @@ async function saveGraph(silent = false) {
     if (res.status === 409) {
       const j = await res.json().catch(() => ({}))
       flash(t('saveRejected') + (j.error ? ': ' + j.error : ''))
+    } else if (res.ok) {
+      // Сервер мог вернуть карточки, созданные после загрузки этой вкладки (телефон, другая
+      // вкладка, MCP). В памяти вкладки их нет — увидеть их можно после перезагрузки страницы.
+      const j = await res.json().catch(() => ({}))
+      baseIds = (graph._nodes || []).map(n => n.id)
+      if (j && j.kept) flash(String(t('saveKept')).replace('{n}', j.kept))
     }
     // Успех не сообщаем: автосохранение работает само, а всплывающее «Сохранено» мешало.
     // Об ошибке всё равно говорим — молча терять правки нельзя.
@@ -3880,6 +3892,7 @@ function graphSignature() {
 }
 function armAutoSave() {
   lastGraphSig = graphSignature()
+  baseIds = (graph._nodes || []).map(n => n.id)   // что эта вкладка знает с момента загрузки
   autoSaveArmed = true
   // Ярослав 23.10.26: точка отсчёта для отмены — состояние после загрузки графа.
   undoBase = graphSnapshot()

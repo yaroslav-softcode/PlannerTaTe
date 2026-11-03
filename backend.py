@@ -558,6 +558,77 @@ def _save_state(state):
         print("[напоминания] не смог сохранить состояние:", e)
 
 
+# --- Защита от затирания чужих карточек (03.11.26) ------------------------------------------
+# Страница держит граф в памяти и присылает его целиком. Если между её загрузкой и сохранением
+# карточку создали другие (телефон через /api/task/add, другая вкладка, MCP), в присланном графе
+# её нет — и сохранение её стирало. 03.11.26 так пропали две карточки с телефона (Koroko.ru и
+# «Игра механника»): их приняли в 18:28, а автосохранение вкладки, открытой раньше, снесло их в
+# 19:45. Теперь страница присылает baseIds — номера карточек, которые она видела при загрузке.
+# Карточка, которой нет в присланном графе и которой не было в baseIds, появилась ПОЗЖЕ: её
+# возвращаем вместе со связями. Карточка из baseIds, которой нет в графе, — осознанное удаление,
+# его пропускаем (иначе удаление карточек с компьютера перестало бы работать).
+def _keep_foreign_nodes(data, base_ids):
+    """Вернуть в граф карточки, появившиеся после загрузки страницы. Возвращает (граф, сколько)."""
+    if base_ids is None:
+        return data, 0                      # старая страница без baseIds — ведём себя как раньше
+    nodes = data.get("nodes")
+    if not isinstance(nodes, list):
+        return data, 0
+    try:
+        with open(GRAPH_FILE, encoding="utf-8") as f:
+            disk = json.load(f)
+    except Exception:
+        return data, 0
+    have = {n.get("id") for n in nodes}
+    kept_ids = set()
+    for n in disk.get("nodes") or []:
+        if not isinstance(n, dict):
+            continue
+        nid = n.get("id")
+        if nid in have or nid in base_ids:
+            continue
+        nodes.append(n)
+        have.add(nid)
+        kept_ids.add(nid)
+    if not kept_ids:
+        return data, 0
+    links = data.get("links")
+    if isinstance(links, dict):
+        links = list(links.values())
+    if not isinstance(links, list):
+        links = []
+    have_link = {l[0] for l in links if isinstance(l, list) and l}
+    for l in disk.get("links") or []:
+        if not isinstance(l, list) or len(l) < 5 or l[0] in have_link:
+            continue
+        # Возвращаем только связи вернувшихся карточек: связь между двумя «своими» карточками,
+        # которую пользователь сознательно убрал, возвращать нельзя.
+        if l[1] not in kept_ids and l[3] not in kept_ids:
+            continue
+        if l[1] not in have or l[3] not in have:
+            continue                        # второй конец тоже удалён — линия не нужна
+        links.append(l)
+        have_link.add(l[0])
+        src = next((n for n in nodes if n.get("id") == l[1]), None)
+        if src is not None:
+            outs = src.get("outputs") or []
+            if outs:
+                cur = outs[0].get("links")
+                cur = list(cur) if isinstance(cur, list) else []
+                if l[0] not in cur:
+                    cur.append(l[0])
+                outs[0]["links"] = cur
+        dst = next((n for n in nodes if n.get("id") == l[3]), None)
+        if dst is not None:
+            ins = dst.get("inputs") or []
+            if ins and not ins[0].get("link"):
+                ins[0]["link"] = l[0]
+    data["links"] = links
+    print("[граф] вернул карточки, о которых вкладка не знала: %s"
+          % ", ".join(str(i) for i in sorted(kept_ids)))
+    return data, len(kept_ids)
+
+
 # --- Запись графа: атомарно, со страховкой и с защитой от «схлопывания» (07.10.26) ----------
 # Раньше автосохранение приложения писало graph.json напрямую: сбой в момент записи портил
 # файл, а случайный пустой граф (баг страницы, пустая вкладка) за 600 мс затирал весь план.
@@ -690,12 +761,24 @@ def api_save():
     # сохраняет граф, не зная о них (оно держит граф в памяти).
     # force=1 — явное сохранение (Ctrl+S): пишем любой граф, даже «схлопнутый» (защита ниже).
     force = request.args.get("force") == "1"
+    # baseIds — номера карточек, которые страница видела при загрузке (03.11.26): то, чего в её
+    # графе нет и чего не было в baseIds, создали другие — такие карточки возвращаем (см. ниже).
+    raw_base = data.pop("baseIds", None)
+    base_ids = None
+    if isinstance(raw_base, list):
+        base_ids = set()
+        for x in raw_base:
+            try:
+                base_ids.add(int(x))
+            except (TypeError, ValueError):
+                pass
     data, added = _merge_phone_tasks(data)
+    data, kept = _keep_foreign_nodes(data, base_ids)
     ok, err = _write_graph(data, force=force)
     if not ok:
         return jsonify({"status": "error", "error": err}), 409
     _gc_image_blobs(data)
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "kept": kept})
 
 
 # --- Картинки карточек: отдельные файлы, не data-URL в графе (07.10.26) ---------------------
