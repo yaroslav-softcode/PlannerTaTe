@@ -734,6 +734,34 @@ def static_files(path):
     return send_from_directory(app.static_folder, path)
 
 
+# --- Версия графа на диске (1.10, решение Ярослава 06.11.26) -------------------------
+# Открытое окно держит граф в памяти, а карточки приходят мимо него: телефон и планшет
+# пишут в phone_tasks.json (и в graph.json через /api/task/add), Гермес (MCP) правит
+# graph.json напрямую, вторая вкладка сохраняет его же. Страница опрашивает ЭТУ подпись
+# и сама подтягивает свежий граф — нажимать F5 больше не нужно.
+def _graph_rev():
+    """Дешёвая подпись состояния: mtime+size graph.json и списка задач устройств."""
+    parts = []
+    for p in (GRAPH_FILE, PHONE_TASKS_FILE):
+        try:
+            st = os.stat(p)
+            parts.append("%x-%x" % (st.st_mtime_ns, st.st_size))
+        except OSError:
+            parts.append("-")
+    return "r" + "-".join(parts)
+
+
+@app.route("/api/rev", methods=["GET"])
+def api_rev():
+    """Версия графа на диске — крошечный ответ для авторазгрузки открытого окна.
+
+    Ключ доступа не проверяем: наружу не уходит ничего, кроме хеша файла (тот же режим,
+    что у /api/load и /ping), а телефонный WebView этот путь не перехватывает — страница
+    на телефоне просто получает 404 и не трогает свой граф.
+    """
+    return jsonify({"rev": _graph_rev()})
+
+
 @app.route("/api/load", methods=["GET"])
 def api_load():
     if not os.path.exists(GRAPH_FILE):
@@ -778,7 +806,7 @@ def api_save():
     if not ok:
         return jsonify({"status": "error", "error": err}), 409
     _gc_image_blobs(data)
-    return jsonify({"status": "ok", "kept": kept})
+    return jsonify({"status": "ok", "kept": kept, "rev": _graph_rev()})
 
 
 # --- Картинки карточек: отдельные файлы, не data-URL в графе (07.10.26) ---------------------

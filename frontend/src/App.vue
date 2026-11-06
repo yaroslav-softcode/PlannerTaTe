@@ -1107,12 +1107,18 @@ class RectNode extends LGraphNode {
       }
     }
 
-    // Кнопка-лупа «открыть описание целиком» (просьба Ярослава 05.10.26): только на телефоне и
-    // только когда описание уже показано (ближний план). Левый верхний угол, ПРАВЕЕ порта входа —
-    // сам порт врезан в угол и занимает область ~7×7 единиц, наехать на него нельзя.
-    if (IS_PHONE && viewScale >= zoomDetail() && !isRem && descText) {
-      const bs = 11                       // размер значка в единицах карточки (на телефоне ×3 ≈ 33 px)
-      const bx = 9, by = 1.5              // правее порта входа, в полосе шапки
+    // Кнопка-лупа «открыть описание целиком» (просьба Ярослава 05.10.26) — в ближнем плане,
+    // когда описание уже показано. Левый верхний угол карточки.
+    // 1.10 (Ярослав 06.11.26): кнопка нужна и на компьютере — вблизи описание влезает не всегда,
+    // а в читалке оно полным текстом и со ссылками, по которым можно кликнуть. Значок Ярослав
+    // выбрал тот же, что на телефоне (лупа с плюсом, №1 из предложенных) — код не меняем.
+    // 06.11.26: Ярослав просил прижать ещё левее. Порты тут ни при чём — вход и выход стоят
+    // ПОСЕРЕДИНЕ сторон (PORT.r = 4.2), в углу свободно. Левее всех — полоса статуса, она
+    // широкая максимум на 3 единицы (themes.js: w: 2..3), поэтому значок начинается с 4-й:
+    // между полосой и текстом шапки (шапка отступает от края на 12) зазора больше нет.
+    if (viewScale >= zoomDetail() && !isRem && descText) {
+      const bs = 11                       // размер значка в единицах карточки (телефон ×3, ПК ×4)
+      const bx = 4, by = 1.5              // впритык к полосе статуса, в полосе шапки
       drawZoomBtn(ctx, bx + bs / 2, by + bs / 2, bs, t.titleColor)
       const pad = 3                       // запас под палец (мишень мелкая)
       this._zoomBtn = { x: bx - pad, y: by - pad, w: bs + pad * 2, h: bs + pad * 2 }
@@ -1377,6 +1383,13 @@ LGraphCanvas.prototype.processMouseMove = function (e) {
     if (node && node.device === 'home') {
       const dx = e.canvasX - (node.pos[0] + node.size[0] / 2), dy = e.canvasY - (node.pos[1] + node.size[1] / 2 - HOME_REFRESH_DY)
       if (dx * dx + dy * dy <= HOME_REFRESH_R * HOME_REFRESH_R) this.canvas.style.cursor = 'pointer'
+    }
+    // Кнопка-лупа «открыть описание» (1.10): рука именно на значке, а не на всей карточке,
+    // иначе она спорет перетаскивание карточки. Зона та же, что записала отрисовка.
+    const zb = node && node._zoomBtn
+    if (zb) {
+      const lx = e.canvasX - node.pos[0], ly = e.canvasY - node.pos[1]
+      if (lx >= zb.x && lx <= zb.x + zb.w && ly >= zb.y && ly <= zb.y + zb.h) this.canvas.style.cursor = 'pointer'
     }
     if (node && node.resizable !== false && !node.flags.collapsed) {
       const c2 = cornerOfNode(node, e.canvasX, e.canvasY)
@@ -1643,6 +1656,10 @@ async function initCanvas() {
   // Активное окно в 8 раз больше + содержимое в его середине (см. FIELD_AREA_X).
   applyFieldView()
   armAutoSave()   // с этого момента любое изменение карточек сохраняется автоматически
+
+  // Авторазгрузка окна (1.10): раз в 2,5 с сверяем версию графа на сервере — чтобы карточки,
+  // приехавшие с телефона/планшета/Гермесом, появлялись здесь сами, без F5.
+  setInterval(pollRemoteGraph, REV_POLL_MS)
 
   // Двойной щелчок по пустому месту — НИЧЕГО не создаётся (по карточке — подзадача, см. onDblClick).
   // Отключаем ВНУТРЕННИЙ обработчик LiteGraph: по умолчанию двойной щелчок по
@@ -3851,7 +3868,15 @@ async function saveGraph(silent = false) {
       // вкладка, MCP). В памяти вкладки их нет — увидеть их можно после перезагрузки страницы.
       const j = await res.json().catch(() => ({}))
       baseIds = (graph._nodes || []).map(n => n.id)
-      if (j && j.kept) flash(String(t('saveKept')).replace('{n}', j.kept))
+      // Сервер вернул карточки, созданные в другом месте, — тянем их в окно СРАЗУ, не дожидаясь
+      // тика опроса (1.10). Не вышло только тогда честно просим F5 (текст saveKept).
+      if (j && j.kept) {
+        const added = await applyRemoteGraph()
+        if (added === false) flash(String(t('saveKept')).replace('{n}', j.kept))
+        else lastRev = await fetchRev()
+      } else if (j && typeof j.rev === 'string') {
+        lastRev = j.rev          // наше собственное сохранение чужой правкой не считается
+      }
     }
     // Успех не сообщаем: автосохранение работает само, а всплывающее «Сохранено» мешало.
     // Об ошибке всё равно говорим — молча терять правки нельзя.
@@ -4044,10 +4069,29 @@ function jumpToNode(n) {
 // Возвращает true, если сохранённый граф найден и загружен.
 async function loadGraph() {
   try {
+    const data = await fetchGraphPayload()
+    if (!data) return false
+    return applyGraphPayload(data)
+  } catch (e) { console.error(e); return false }
+}
+
+// Ответ /api/load: серверный граф или null (графа нет / сервер недоступен).
+async function fetchGraphPayload() {
+  try {
     const res = await fetch('/api/load')
-    if (!res.ok) return false
+    if (!res.ok) return null
     const data = await res.json()
-    if (!data || !Array.isArray(data.nodes) || !data.nodes.length) return false
+    if (!data || !Array.isArray(data.nodes) || !data.nodes.length) return null
+    return data
+  } catch (e) { console.error(e); return null }
+}
+
+// Ставит серверный граф в ХОЛСТ. Порядок ровно тот, что при загрузке страницы: нормализация
+// координат, дубли каналов, пол высоты напоминаний (56), autoFit-ширины, resizable плиток.
+// Точка ОДНА на загрузку и авторазгрузку (1.10), иначе авторазгрузка «забудет» один из шагов
+// и карточки поедут. true — граф применён.
+function applyGraphPayload(data) {
+  try {
     data.nodes.forEach(normalizeNode)
     graph.configure(data)                 // configure сам чистит старый граф (keep_old не задан)
     graph.setDirtyCanvas(true, true)
@@ -4086,6 +4130,95 @@ async function loadGraph() {
     if (autoFitSeen || autoFixSeen) { graph.setDirtyCanvas(true, true); saveGraph(true) }   // фиксируем размеры
     return true
   } catch (e) { console.error(e); return false }
+}
+
+// --- Авторазгрузка окна (решение Ярослава 06.11.26, версия 1.10) ------------------
+// Карточка, созданная телефоном/планшетом (POST /api/task/add), Гермесом (MCP пишет
+// graph.json напрямую) или второй вкладкой, появляется на сервере, а открытое окно держит
+// СВОЙ граф в памяти. Раньше это выглядело так: «окно не обновилось, я начинаю вводить —
+// и получается две разные версии карточек». Ярослав решил: окно обновляется само (как F5),
+// только без руки: граф подменяем в том же окне, камера и зум остаются где были.
+const REV_POLL_MS = 2500
+let lastRev = null      // версия графа, которая УЖЕ лежит в этом окне (null — ещё не спрашивали)
+let revBusy = false     // запрос в полёте — следующий тик не наслаиваем
+
+// Версия графа на сервере — подпись graph.json и списка задач устройств. null означает, что
+// сервер её не отдаёт: в WebView телефона /api/rev локальным загрузчиком не перехвачен, и это
+// правильно — на телефоне граф обновляет своя синхронизация, а не страница.
+async function fetchRev() {
+  try {
+    const r = await fetch('/api/rev', { cache: 'no-store' })
+    if (!r.ok) return null
+    const j = await r.json()
+    return typeof j.rev === 'string' ? j.rev : null
+  } catch (e) { return null }
+}
+
+// Правки этого окна ещё не доехали до сервера: подмена графа их сотрёт — ждём своего save.
+function localEditsPending() {
+  return savingNow || pendingSave || graphSignature() !== lastGraphSig
+}
+
+// Пользователь прямо сейчас что-то делает: печатает в поле, тянет карточку/уголок/рамку,
+// идёт восстановление Undo. В этот момент граф подменять нельзя.
+function userBusy() {
+  const el = document.activeElement
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return true
+  const lc = liteCanvas
+  if (lc && (lc.resizing_node || lc.dragging_node || lc.dragging_canvas || lc.dragging_rectangle || lc._ptCorner || lc._ptRmb)) return true
+  return !!undoLock
+}
+
+// Ставит серверный граф в это окно и возвращает число ПРИШЕДШИХ карточек (false — не вышло).
+// Выделение и открытая читалка держат ССЫЛКИ на узлы старого графа: после configure они
+// мертвы, поэтому снимаем заранее и возвращаем по номеру карточки.
+async function applyRemoteGraph() {
+  const data = await fetchGraphPayload()
+  if (!data) return false
+  const before = (graph._nodes || []).length
+  const keepSel = selectedNode.value ? selectedNode.value.id : null
+  const keepReader = descReaderNode.value ? descReaderNode.value.id : null
+  if (liteCanvas && liteCanvas.deselectAllNodes) liteCanvas.deselectAllNodes()
+  selectedNode.value = null
+  descReaderNode.value = null
+  if (!applyGraphPayload(data)) return false
+  const byId = (id) => { try { return graph.getNodeById(id) || null } catch (e) { return null } }
+  const nSel = keepSel === null ? null : byId(keepSel)
+  if (nSel && liteCanvas) {
+    nSel.is_selected = true                                  // флаг выделения в этом форке litegraph
+    liteCanvas.selected_nodes = liteCanvas.selected_nodes || {}
+    liteCanvas.selected_nodes[nSel.id] = nSel
+  }
+  selectedNode.value = nSel
+  descReaderNode.value = keepReader === null ? null : byId(keepReader)
+  // Подписи и история отсчитываются от нового состояния. Прежний вид в стек Undo НЕ кладём:
+  // Ctrl+Z после авторазгрузки не должен случайно вычеркнуть чужие карточки с сервера.
+  lastGraphSig = graphSignature()
+  baseIds = (graph._nodes || []).map((n) => n.id)
+  undoBase = graphSnapshot()
+  redoStack.length = 0
+  if (searchQ.value) runSearch()                             // кольца поиска — по новым узлам
+  graph.setDirtyCanvas(true, true)
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+  return (graph._nodes || []).length - before
+}
+
+// Тик опроса: появилась запись на сервере — окно сразу её показывает. Молча и только когда
+// это безопасно: не во время ввода/драга и когда наши правки уже записаны.
+async function pollRemoteGraph() {
+  if (!graph || !autoSaveArmed || revBusy) return
+  if (document.hidden || userBusy() || localEditsPending()) return
+  revBusy = true
+  try {
+    const rev = await fetchRev()
+    if (rev === null) return
+    if (lastRev === null) { lastRev = rev; return }          // первая версия — точка отсчёта
+    if (rev === lastRev) return
+    const added = await applyRemoteGraph()
+    if (added === false) return
+    lastRev = await fetchRev()                               // /api/load сам дописывает граф
+    if (added > 0) flash(String(t('remoteUpdated')).replace('{n}', added))
+  } finally { revBusy = false }
 }
 
 // --- Подбор ширины новой задачи под название --------------------------------------
@@ -4714,7 +4847,7 @@ onBeforeUnmount(() => {
       <!-- Полноэкранная читалка описания: открывается кнопкой-лупой на карточке (телефон) -->
       <DescReader v-if="descReaderNode" :title="String(descReaderNode.title || '')"
                   :text="String(descReaderNode.description || '')" :lang="lang"
-                  @close="descReaderNode = null" />
+                  @openlink="openUrl" @close="descReaderNode = null" />
 
       <div v-if="viewImage" class="img-modal" @click="viewImage = ''">
         <img :src="viewImage" alt="" />
