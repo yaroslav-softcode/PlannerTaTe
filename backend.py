@@ -2353,6 +2353,56 @@ def api_open_file():
     return jsonify({"status": "ok"})
 
 
+# --- Видео в карточке на холсте: поток файла для встроенного плеера (06.11.26) ---------------
+# Просьба Ярослава: «включать видео прямо в карточке на холсте». Браузер играет видео только
+# потоком с поддержкой Range (перемотка), поэтому отдаём локальный файл через
+# send_file(conditional=True). Голый путь в src <video> не ставим: сначала JS просит пропуск
+# (POST /api/media/open — под той же защитой, что open_file), затем короткоживущий токен едет
+# в src. Так чужая страница в браузере не сможет тянуть файлы с этого компьютера.
+_MEDIA_VIDEO_EXT = {"mp4", "m4v", "webm", "mov", "mkv", "avi", "ogv", "ts"}
+_MEDIA_TICKETS = {}                  # токен -> (путь, срок годности)
+_MEDIA_TICKET_TTL = 6 * 3600         # хватает на долгий просмотр и перемотки
+
+
+def _media_ticket(path):
+    now = time.time()
+    for k in [k for k, v in list(_MEDIA_TICKETS.items()) if v[1] < now]:
+        _MEDIA_TICKETS.pop(k, None)
+    tok = secrets.token_hex(16)
+    _MEDIA_TICKETS[tok] = (path, now + _MEDIA_TICKET_TTL)
+    return tok
+
+
+@app.route("/api/media/open", methods=["POST"])
+def api_media_open():
+    """Разрешение на проигрывание файла: проверяем, что это видео, и выдаём адрес потока."""
+    bad = _api_guard()
+    if bad:
+        return bad
+    data = request.get_json(silent=True) or {}
+    path = str(data.get("path") or "").strip().strip('"')
+    if not path or not os.path.isabs(path):
+        return jsonify({"status": "error", "error": "нужен полный путь к файлу"}), 400
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    if ext not in _MEDIA_VIDEO_EXT:
+        return jsonify({"status": "error", "error": "это не видео"}), 400
+    if not os.path.isfile(path):
+        return jsonify({"status": "error", "error": "файл не найден"}), 404
+    return jsonify({"status": "ok", "url": "/api/media?t=" + _media_ticket(path)})
+
+
+@app.route("/api/media", methods=["GET"])
+def api_media():
+    """Поток видео по пропуску (Range поддерживает send_file — нужен для перемотки)."""
+    tok = (request.args.get("t") or "").strip()
+    rec = _MEDIA_TICKETS.get(tok)
+    if not rec or rec[1] < time.time():
+        return jsonify({"status": "error", "error": "пропуск недействителен"}), 403
+    if not os.path.isfile(rec[0]):
+        return jsonify({"status": "error", "error": "файл не найден"}), 404
+    return send_file(rec[0], conditional=True)
+
+
 # --- Файлы для устройств: с плитки «Смартфон»/«Планшет» на устройство (06.10.26) --------------
 # Просьба Ярослава: файл, брошенный на плитку устройства, «начинает копироваться» на телефон
 # или планшет. Кладём файл в очередь BASE_DIR/device_files/<устройство>/ — устройство заберёт

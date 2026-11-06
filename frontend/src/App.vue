@@ -412,6 +412,11 @@ class RectNode extends LGraphNode {
     const px = this.pos[0], py = this.pos[1], w = this.size[0], h = this.size[1]
     return x > px - 4 - m && x < px + w + 4 + m && y > py - 2 - m && y < py + h + 2 + m
   }
+  // Узел удалён из графа (Delete, корзина, подмена графа): гасим плеер этой карточки, иначе
+  // звук продолжил бы играть после удаления.
+  onRemoved() {
+    stopVideoOn(this)
+  }
   // Текст «во сколько прозвучит» для карточки-напоминания. «×N» больше нет: количество убрано,
   // частоту задаёт поле «Повторения» (Ярослав 01.10.26).
   reminderTimeText() {
@@ -596,6 +601,19 @@ class RectNode extends LGraphNode {
         }
         ctx.restore()
       }
+    }
+
+    // 2б. Живое видео карточки (06.11.26): пока включено — вместо постера рисуем КАДР видео
+    // в тех же границах (object-fit: cover). Покадрово, потому что холст — это canvas, а кадры
+    // отдаёт скрытый <video>, который тянет файл потоком с /api/media (см. toggleVideoOn).
+    if (this._videoEl && this._videoEl.videoWidth) {
+      const v = this._videoEl
+      const k = Math.max(w / v.videoWidth, h / v.videoHeight)
+      const dw = v.videoWidth * k, dh = v.videoHeight * k
+      ctx.save()
+      roundRect(ctx, 0, 0, w, h, r); ctx.clip()
+      ctx.drawImage(v, (w - dw) / 2, (h - dh) / 2, dw, dh)
+      ctx.restore()
     }
 
     // 3. Рамка: цвет — акцент узла, свечение — из темы (у неона сильное, у светлой темы нет).
@@ -1230,6 +1248,34 @@ class RectNode extends LGraphNode {
       ctx.restore()
     }
 
+    // Кнопка «играть» на карточке с видео (06.11.26): подсказывает, что клик по карточке
+    // включает видео прямо на холсте (toggleVideoOn). Пока видео играет — кнопки нет.
+    if (!isRem && (this.kind || 'task') === 'task' && videoPathOf(this) &&
+        !(this._videoEl && !this._videoEl.paused)) {
+      const pr = Math.max(9, Math.min(13, Math.round(Math.min(w, h) * 0.16)))
+      // Ярослав 06.11.26: кнопка переехала из центра — теперь ПРАВЫЙ НИЖНИЙ угол карточки.
+      // Если в нижней строке справа стоит дата, поднимаем кнопку НАД строкой — иначе она
+      // накрывает дату (замечено 06.11.26 при проверке кнопки в углу).
+      const pcx = w - pr - 4
+      const pcy = dueShown ? (h - footerH - pr - 2) : (h - pr - 4)
+      ctx.save()
+      ctx.beginPath()
+      ctx.arc(pcx, pcy, pr, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(8, 12, 18, 0.5)'
+      ctx.fill()
+      ctx.lineWidth = 1.2
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
+      ctx.stroke()
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
+      ctx.beginPath()
+      ctx.moveTo(pcx - pr * 0.3, pcy - pr * 0.46)
+      ctx.lineTo(pcx - pr * 0.3, pcy + pr * 0.46)
+      ctx.lineTo(pcx + pr * 0.54, pcy)
+      ctx.closePath()
+      ctx.fill()
+      ctx.restore()
+    }
+
     // Порты (06.10.26): вход — кольцо, выход — точка, оба НА СЕРЕДИНЕ СТОРОН и всегда на
     // ПРОТИВОПОЛОЖНЫХ сторонах: при перетаскивании вход и выход «флипаются» — меняются местами
     // (см. portSides/getConnectionPos; у плиток свои базовые стороны). Рисуем последними, чтобы
@@ -1338,11 +1384,20 @@ LGraphCanvas.prototype.processMouseDown = function (e) {
   this._ptRmb = (e.which === 3 && this.graph && !this.live_mode)
     ? { x: e.canvasX, y: e.canvasY, moved: false }
     : null
+  // 06.11.26: запоминаем начало ЛКМ-клика — «клик без движения по карточке с видео» станет
+  // play/pause (разбор в processMouseUp).
+  this._ptClick = (e.which === 1 && this.graph && !this.live_mode && !this.connecting_node)
+    ? { x: e.canvasX, y: e.canvasY, moved: false }
+    : null
   return _origPMD.call(this, e)
 }
 const _origPMM = LGraphCanvas.prototype.processMouseMove
 LGraphCanvas.prototype.processMouseMove = function (e) {
   if (this.graph && this.adjustMouseEvent) this.adjustMouseEvent(e)   // canvasX/Y, см. выше
+  // Клик превратился в драг (сдвиг > 4) — play/pause на отпускании уже не сработает.
+  if (this._ptClick && !this._ptClick.moved &&
+      Math.abs(e.canvasX - this._ptClick.x) + Math.abs(e.canvasY - this._ptClick.y) > 4)
+    this._ptClick.moved = true
   // Ярослав 22.10.26: рамка выделения правой кнопкой. Отвели больше ~6px от точки нажатия —
   // начинаем штатную рамку LiteGraph (dragging_rectangle): библиотека сама её рисует и
   // растягивает. Пока не отвели — это ещё «правый клик», и холст скроллится как обычно
@@ -1418,6 +1473,16 @@ LGraphCanvas.prototype.processMouseUp = function (e) {
     else if (!rmb.moved)
       openCanvasMenu(e)
     this.setDirty(true, true)
+  }
+  // 06.11.26: клик ЛКМ БЕЗ перетаскивания по карточке с видео-ссылкой — включить/пауза прямо
+  // на холсте. Клики по значкам файлов и лупе не трогаем (там свои действия), модификаторы
+  // (Ctrl-копирование и т.п.) — тоже мимо.
+  const clk = this._ptClick
+  this._ptClick = null
+  if (clk && e.which === 1 && !clk.moved && this.graph && !this.live_mode &&
+      !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+    const node = this.graph.getNodeOnPos(clk.x, clk.y, this.visible_nodes, 5)
+    if (node && !fileBadgeAt(clk.x, clk.y) && !zoomBtnNodeAt(clk.x, clk.y)) toggleVideoOn(node)
   }
   return r
 }
@@ -3045,6 +3110,172 @@ async function createImageCard(cx, cy, f) {
   onNodeChange()                                     // перерисовать; размер попадёт в автосохранение
 }
 
+// --- Видео на холсте: скриншот первого кадра (06.11.26) ---------------------------------------
+// Ярослав: «перетаскиваю видео на холст — делается скриншот первого кадра, карточка с этим
+// фото, и внизу приложено это видео». Кадр снимаем НА КЛИЕНТЕ (<video> + canvas): декодер у
+// браузера уже есть, файл никуда не загружается. На СУЩЕСТВУЮЩУЮ карточку видео по-прежнему
+// кладётся только ссылкой — фон в этом случае не трогаем (уточнение Ярослава 06.11.26).
+function isVideoFile(f) {
+  if (!f) return false
+  if (f.type && f.type.indexOf('video/') === 0) return true
+  return VIDEO_EXT.indexOf(fileExt(String(f.name || ''))) >= 0
+}
+
+// Первый кадр видео → JPEG-blob { blob, w, h } или null (формат браузеру не по силам).
+function videoFirstFrame(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const v = document.createElement('video')
+    v.muted = true
+    v.preload = 'auto'
+    v.playsInline = true
+    let done = false
+    const finish = (res) => {
+      if (done) return
+      done = true
+      try { v.removeAttribute('src'); v.load() } catch (e) {}
+      URL.revokeObjectURL(url)
+      resolve(res)
+    }
+    const shot = () => {
+      try {
+        if (!v.videoWidth || !v.videoHeight) { finish(null); return }
+        const c = document.createElement('canvas')
+        c.width = v.videoWidth
+        c.height = v.videoHeight
+        c.getContext('2d').drawImage(v, 0, 0)
+        c.toBlob((b) => finish(b ? { blob: b, w: v.videoWidth, h: v.videoHeight } : null), 'image/jpeg', 0.85)
+      } catch (e) { console.error(e); finish(null) }
+    }
+    v.onerror = () => finish(null)
+    v.onloadeddata = () => {
+      // Обычно кадр готов уже тут; если позиция успела уехать — вернёмся к началу, снимем на seeked.
+      if (!v.videoWidth) return
+      if (v.currentTime > 0.001) { try { v.currentTime = 0; return } catch (e) {} }
+      shot()
+    }
+    v.onseeked = () => shot()
+    setTimeout(() => { if (!done && v.videoWidth) shot(); else finish(null) }, 4000)   // страховка от «тихого» зависания
+    v.src = url
+  })
+}
+
+// Видео, брошенное на ПУСТОЕ место холста: карточка с фоном-скриншотом первого кадра и
+// приложенным видео (просьба Ярослава 06.11.26). Кадр не снялся — всё равно создаём карточку:
+// заголовок = имя файла, видео прикладываем, честно предупреждаем.
+async function createVideoCard(cx, cy, f) {
+  const node = createNode(cx, cy)
+  if (!node) return
+  // Панель редактирования сразу НЕ открываем — как у карточки-рисунка: снимаем выделение.
+  selectedNode.value = null
+  node.title = ''
+  node.dimMode = 'off'
+  const frame = await videoFirstFrame(f)
+  const dims = (frame && frame.blob) ? await attachImage(node, frame.blob) : null
+  if (dims && frame) {
+    const W = IMG_CARD_W
+    const H = Math.max(28, Math.round(W * (frame.h / Math.max(1, frame.w))))   // 28 — минимум карточки
+    node.pos = [cx - W / 2, cy - H / 2]
+    node.size = [W, H]
+  } else {
+    // Первый кадр браузер не декодировал — карточка-ссылка с именем файла, без фона.
+    node.title = String(f.name || '').replace(/\.[^.]+$/, '').trim() || t('taskTitle')
+    flash(t('videoFrameFail'))
+  }
+  // Видео прикладываем ссылкой на файл в системе — как и любой другой файл (locate_file по приметам).
+  await attachDroppedFile(node, f)
+  onNodeChange()                                     // перерисовать; размер попадёт в автосохранение
+}
+
+// --- Живое видео в карточке (06.11.26, просьба Ярослава) --------------------------------------
+// Клик по карточке с видео-ссылкой включает/ставит паузу; кадры рисуются прямо В карточке на
+// холсте (onDrawBackground), поэтому видео едет и зумится вместе с холстом. Играет ОДНО видео
+// за раз; файл тянется потоком с /api/media (браузерный декодер сам буферизует и перематывает).
+let videoNode = null        // карточка, на которой сейчас открыт плеер (в т.ч. на паузе)
+let videoRAF = 0            // цикл перерисовки, пока видео играет
+
+// Первая видео-ссылка карточки (по расширению); '' — видео нет (карточка ведёт себя как обычно).
+function videoPathOf(n) {
+  if (!n || (n.kind || 'task') !== 'task') return ''
+  for (const p of filesOf(n)) if (VIDEO_EXT.indexOf(fileExt(p)) >= 0) return p
+  return ''
+}
+
+// Гасит плеер карточки: пауза, отвязка src, остановка цикла перерисовки. Постер (кадр) остаётся.
+function stopVideoOn(node) {
+  const n = node && toRaw(node)
+  if (!n || !n._videoEl) return
+  const el = n._videoEl
+  n._videoEl = null
+  n._videoBusy = false
+  try { el.pause() } catch (e) {}
+  try { el.removeAttribute('src'); el.load() } catch (e) {}
+  if (videoNode === n) videoNode = null
+  if (videoRAF) { cancelAnimationFrame(videoRAF); videoRAF = 0 }
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+}
+
+// Полная остановка (подмена графа): на холсте видео больше ничего не играет.
+function stopAnyVideo() {
+  if (videoNode) stopVideoOn(videoNode)
+  if (videoRAF) { cancelAnimationFrame(videoRAF); videoRAF = 0 }
+}
+
+// Перерисовывает холст кадр за кадром, пока видео играет (canvas сам себя не обновит).
+function videoTick() {
+  videoRAF = 0
+  const n = videoNode
+  if (!n || !n._videoEl) return
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+  if (!n._videoEl.paused && !n._videoEl.ended) videoRAF = requestAnimationFrame(videoTick)
+}
+
+// Клик по карточке: нет плеера — включаем; играет — пауза; на паузе — продолжаем с того же места.
+async function toggleVideoOn(node) {
+  const n = node && toRaw(node)
+  if (!n || n._videoBusy) return
+  const path = videoPathOf(n)
+  if (!path) return
+  if (videoNode && videoNode !== n) stopVideoOn(videoNode)   // одно видео за раз
+  const v = n._videoEl
+  if (v) {
+    if (v.paused) {
+      try { await v.play() } catch (e) { stopVideoOn(n); flash(t('videoPlayFail')) }
+    } else {
+      v.pause()
+    }
+    if (liteCanvas) liteCanvas.setDirty(true, true)
+    if (!videoRAF && n._videoEl && !n._videoEl.paused) videoTick()
+    return
+  }
+  // Новый плеер: сперва пропуск на файл (защищённый эндпоинт), затем поток в <video>.
+  n._videoBusy = true
+  let url = ''
+  try {
+    const r = await fetch('/api/media/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Plannertate-Client': '1' },
+      body: JSON.stringify({ path }),
+    })
+    const j = await r.json().catch(() => ({}))
+    url = j && j.status === 'ok' ? String(j.url || '') : ''
+  } catch (e) {}
+  n._videoBusy = false
+  if (!url) { flash(t('videoPlayFail')); return }
+  const el = document.createElement('video')
+  el.muted = false
+  el.playsInline = true
+  el.preload = 'auto'
+  el.src = url
+  n._videoEl = el
+  videoNode = n
+  el.onended = () => stopVideoOn(n)                        // досмотрели — снова постер
+  el.onerror = () => { stopVideoOn(n); flash(t('videoPlayFail')) }
+  try { await el.play() } catch (e) { stopVideoOn(n); flash(t('videoPlayFail')); return }
+  if (!videoRAF) videoTick()
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+}
+
 // --- Ссылка на файл: приложить (нативный диалог) и открыть -------------------
 // Путь выбранного файла знает только СЕРВЕР — он работает на этом же компьютере, а браузер
 // путь не отдаёт (приватность). Поэтому выбор идёт через /api/pick_file (диалог Windows).
@@ -3367,7 +3598,10 @@ function onCanvasDrop(ev) {
     // Пустое место холста: КАРТИНКА → своя карточка с рисунком-фоном и пустым заголовком
     // (просьба Ярослава 07.10.26); остальные файлы, включая музыку, — просто ничего.
     // Раньше здесь библиотека рисовала свои ноды «Image»/«Source» — бросок перехвачен.
+    // ВИДЕО (06.11.26): карточка со скриншотом первого кадра, видео прикладывается ссылкой снизу.
+    // На СУЩЕСТВУЮЩУЮ карточку видео по-прежнему кладётся только ссылкой — фон не трогаем.
     if (f.type && f.type.indexOf('image/') === 0) createImageCard(gx, gy, f)
+    else if (isVideoFile(f)) createVideoCard(gx, gy, f)
     return
   }
   // Панель устройства: ЛЮБОЙ файл, брошенный на плитку, уезжает на устройство (06.10.26).
@@ -3974,6 +4208,7 @@ function restoreSnapshot(json) {
     const data = JSON.parse(json)
     if (!data || !Array.isArray(data.nodes)) return false
     data.nodes.forEach(normalizeNode)
+    stopAnyVideo()                 // подмена графа: гасим играющее видео (06.11.26)
     graph.configure(data)          // configure сам чистит старый граф
     for (const n of graph._nodes || []) if (isDeviceFileCard(n)) fitFileCard(n)
     selectedNode.value = null
@@ -4093,6 +4328,7 @@ async function fetchGraphPayload() {
 function applyGraphPayload(data) {
   try {
     data.nodes.forEach(normalizeNode)
+    stopAnyVideo()                        // авторазгрузка подменяет граф: гасим видео (06.11.26)
     graph.configure(data)                 // configure сам чистит старый граф (keep_old не задан)
     graph.setDirtyCanvas(true, true)
     if (liteCanvas) liteCanvas.setDirty(true, true)
