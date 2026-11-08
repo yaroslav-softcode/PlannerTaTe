@@ -405,6 +405,15 @@ class RectNode extends LGraphNode {
       const dx = pos[0] - this.size[0] / 2, dy = pos[1] - (this.size[1] / 2 - HOME_REFRESH_DY)
       if (dx * dx + dy * dy <= HOME_REFRESH_R * HOME_REFRESH_R) { location.reload(); return true }
     }
+    // Полоса перемотки видео (08.11.26): нажатие по ней — перемотка; возврат true запрещает
+    // LiteGraph тащить карточку (block_drag_node), как и при угловом ресайзе.
+    if (e.which === 1 && pos && canvas && this._seekBar) {
+      const b = this._seekBar
+      if (pos[0] >= b.x && pos[0] <= b.x + b.w && pos[1] >= b.y && pos[1] <= b.y + b.h) {
+        videoSeekStart(this, canvas, pos[0])
+        return true
+      }
+    }
     return !!(canvas && canvas._ptCorner)
   }
   isPointInside(x, y, margin) {
@@ -987,6 +996,9 @@ class RectNode extends LGraphNode {
     ctx.textAlign = 'center'
 
     this._zoomBtn = null   // кнопка-лупа (телефон, ближний план) — пересчитывается ветками ниже
+    // Видео (08.11.26): полоса перемотки видна только в ближнем плане — в среднем и дальнем
+    // её не рисуем, а прошлую зону попадания снимаем (клик по ней не должен перематывать).
+    this._seekBar = null
     if (viewScale < zoomDetail() || isRem) {   // напоминание всегда рисуем «крупно по центру»
       // СРЕДНИЙ/ДАЛЬНИЙ ПЛАН: название крупно, во всю карточку; описание не показываем.
       // Берём максимальный кегль из диапазона, при котором строки ещё влезают.
@@ -1248,32 +1260,45 @@ class RectNode extends LGraphNode {
       ctx.restore()
     }
 
-    // Кнопка «играть» на карточке с видео (06.11.26): подсказывает, что клик по карточке
-    // включает видео прямо на холсте (toggleVideoOn). Пока видео играет — кнопки нет.
+    // Полоса перемотки видео в ближнем плане (Ярослав 08.11.26): появляется на том же
+    // приближении, где видно описание (viewScale ≥ zoomDetail()) — издалека карточка-видео
+    // выглядит чистым кадром. Значка ▶ на карточке НЕТ вовсе (Ярослав 08.11.26 вечером:
+    // «значок плей вообще удали» — клик по карточке и так играет/ставит паузу).
+    // Единственный орган управления — полоса (клик/драг перематывает, см. videoSeekStart).
     if (!isRem && (this.kind || 'task') === 'task' && videoPathOf(this) &&
-        !(this._videoEl && !this._videoEl.paused)) {
-      const pr = Math.max(9, Math.min(13, Math.round(Math.min(w, h) * 0.16)))
-      // Ярослав 06.11.26: кнопка переехала из центра — теперь ПРАВЫЙ НИЖНИЙ угол карточки.
-      // Если в нижней строке справа стоит дата, поднимаем кнопку НАД строкой — иначе она
-      // накрывает дату (замечено 06.11.26 при проверке кнопки в углу).
-      const pcx = w - pr - 4
-      const pcy = dueShown ? (h - footerH - pr - 2) : (h - pr - 4)
+        viewScale >= zoomDetail()) {
+      const vel = this._videoEl
+      const zoneH = 12                                 // высота зоны перемотки (единицы карточки)
+      const zoneBottom = h - (dueShown ? footerH : 0) - 2
+      const zoneTop = Math.max(2, zoneBottom - zoneH)
+      // Дорожка + заполненная часть + ползунок. Цвета — белое на тёмной подложке:
+      // читается и на светлом, и на тёмном кадре видео.
+      const trH = 4.5
+      const trX0 = 6, trX1 = w - 6
+      const trY = zoneTop + (zoneH - trH) / 2
+      // Пока тянут ползунок — позиция от мыши (_seekDrag), иначе следим за текущим временем.
+      if (!this._seekDrag && vel && isFinite(vel.duration) && vel.duration > 0)
+        this._seekRatio = vel.currentTime / vel.duration
+      const ratio = Math.max(0, Math.min(1, this._seekRatio || 0))
       ctx.save()
-      ctx.beginPath()
-      ctx.arc(pcx, pcy, pr, 0, Math.PI * 2)
       ctx.fillStyle = 'rgba(8, 12, 18, 0.5)'
+      roundRect(ctx, trX0 - 1.5, trY - 1.5, (trX1 - trX0) + 3, trH + 3, (trH + 3) / 2)
       ctx.fill()
-      ctx.lineWidth = 1.2
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)'
+      ctx.lineWidth = 1
       ctx.stroke()
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
+      const fillW = (trX1 - trX0) * ratio
+      if (fillW > 0.5) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
+        roundRect(ctx, trX0, trY, Math.max(fillW, trH * 0.4), trH, trH / 2)
+        ctx.fill()
+      }
       ctx.beginPath()
-      ctx.moveTo(pcx - pr * 0.3, pcy - pr * 0.46)
-      ctx.lineTo(pcx - pr * 0.3, pcy + pr * 0.46)
-      ctx.lineTo(pcx + pr * 0.54, pcy)
-      ctx.closePath()
+      ctx.arc(trX0 + fillW, trY + trH / 2, trH * 0.95, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
       ctx.fill()
       ctx.restore()
+      this._seekBar = { x: trX0 - 2.5, y: zoneTop, w: (trX1 - trX0) + 5, h: zoneH }
     }
 
     // Порты (06.10.26): вход — кольцо, выход — точка, оба НА СЕРЕДИНЕ СТОРОН и всегда на
@@ -1445,6 +1470,12 @@ LGraphCanvas.prototype.processMouseMove = function (e) {
     if (zb) {
       const lx = e.canvasX - node.pos[0], ly = e.canvasY - node.pos[1]
       if (lx >= zb.x && lx <= zb.x + zb.w && ly >= zb.y && ly <= zb.y + zb.h) this.canvas.style.cursor = 'pointer'
+    }
+    // Полоса перемотки видео (08.11.26): курсор-рука и над ней.
+    const sb2 = node && node._seekBar
+    if (sb2) {
+      const lx = e.canvasX - node.pos[0], ly = e.canvasY - node.pos[1]
+      if (lx >= sb2.x && lx <= sb2.x + sb2.w && ly >= sb2.y && ly <= sb2.y + sb2.h) this.canvas.style.cursor = 'pointer'
     }
     if (node && node.resizable !== false && !node.flags.collapsed) {
       const c2 = cornerOfNode(node, e.canvasX, e.canvasY)
@@ -2188,6 +2219,15 @@ function onMouse(ev) {
   // Кнопка-лупа (телефон): открыть описание целиком в полноэкранной читалке.
   const zoomNode = zoomBtnNodeAt(ev.canvasX, ev.canvasY)
   if (zoomNode) { descReaderNode.value = zoomNode; return true }
+  // Полоса перемотки видео (08.11.26): нажатие по ней — только перемотка. Возврат true гасит
+  // processMouseDown (карточка не выделится и не поедет), а клик-переключение play/pause
+  // на отпускании отменяем — гасим запомненный клик.
+  const seekNode = seekBarNodeAt(ev.canvasX, ev.canvasY)
+  if (seekNode) {
+    videoSeekStart(seekNode, liteCanvas, ev.canvasX - seekNode.pos[0])
+    liteCanvas._ptClick = null
+    return true
+  }
   const link = linkDotAt(ev.canvasX, ev.canvasY)
   if (!link) return false
   setHoveredLink(null)
@@ -2296,6 +2336,12 @@ function onDblClick(ev) {
   try { parent = graph.getNodeOnPos(gx, gy) } catch (e) {}
   if (!parent) return                 // клик по пустому месту — ничего не создаём
   parent = toRaw(parent)
+  // Полоса перемотки видео (08.11.26): двойной клик по ней — не подзадача (это орган управления).
+  const sbD = parent._seekBar
+  if (sbD) {
+    const lx = gx - parent.pos[0], ly = gy - parent.pos[1]
+    if (lx >= sbD.x && lx <= sbD.x + sbD.w && ly >= sbD.y && ly <= sbD.y + sbD.h) return
+  }
   // Двойной клик по плашке связей родителя (точка-порт) = автораскладка детей (Ярослав 15.10.26):
   // ровная колонка справа от родителя (порт слева — колонка слева), порядок по времени сверху вниз.
   if (autoLayoutChildren(parent, gx, gy)) return
@@ -2588,6 +2634,15 @@ function onCanvasMouseDown(ev) {
     descReaderNode.value = zoomNode
     return
   }
+  // Полоса перемотки видео (08.11.26): тап/клик по нижней зоне карточки-видео — перемотка.
+  // Как и у лупы: гасим событие, чтобы карточка не выделилась и «верёвочка» не подхватилась.
+  const seekNode = seekBarNodeAt(bx, by)
+  if (seekNode) {
+    ev.preventDefault()
+    ev.stopImmediatePropagation()
+    videoSeekStart(seekNode, liteCanvas, bx - seekNode.pos[0])
+    return
+  }
   // LiteGraph начинает перетаскивание НЕ в mousedown, а на первом движении мыши, поэтому
   // node_dragged тут ещё пуст — карточку под курсором определяем сами тем же hit-тестом.
   let n = liteCanvas.node_dragged
@@ -2614,8 +2669,21 @@ function onDocMouseDownCapture(ev) {
 }
 // Слушаем на документе, а не на холсте: при быстром перетаскивании курсор выходит за холст,
 // события на самом холсте пропадают — подзадачи тогда отстали бы от родителя.
-function onDocMouseMove() {
+function onDocMouseMove(ev) {
   if (!liteCanvas || !graph) return
+  // Полоса перемотки видео (08.11.26): пока жест держится, ведём перемотку за курсором/пальцем.
+  // Слушатель на документе — курсор может выйти за холст в любой момент.
+  const sk = liteCanvas._ptSeek
+  if (sk && ev) {
+    const held = ev.buttons === undefined ? true : !!(ev.buttons & 1)
+    const n = graph.getNodeById(sk.id)
+    if (held && n && n._seekBar) {
+      const [gx] = screenToGraph(ev.clientX, ev.clientY)
+      seekVideoAt(n, gx - n.pos[0])
+    } else if (!held) {
+      finishSeek(liteCanvas)        // кнопку отпустили мимо канваса — перемотка закончена
+    }
+  }
   const dragged = liteCanvas.node_dragged
   if (!dragged) return                        // отпустили: ветку догонит stepFollowLag (см. animate)
   if (!dragFollow || dragFollow.id !== dragged.id) {
@@ -2630,6 +2698,7 @@ function onDocMouseMove() {
 // Конец перетаскивания: LiteGraph округлил позицию карточки — возвращаем потомкам ровно те
 // смещения, что были в начале, чтобы связь не удлинилась ни на пиксель.
 function onDocMouseUp() {
+  finishSeek(liteCanvas)   // перемотка видео (08.11.26): отпускание где угодно завершает жест
   // Сразу не снапим: ветка должна догнать родителя плавно (это и есть «слегка тянется»).
   // Точные позиции выставит finishFollow(), когда кадры догоняния успокоятся. Если мышь
   // отпустили без движения (целей нет) — доводим сразу.
@@ -3230,25 +3299,14 @@ function videoTick() {
   if (!n._videoEl.paused && !n._videoEl.ended) videoRAF = requestAnimationFrame(videoTick)
 }
 
-// Клик по карточке: нет плеера — включаем; играет — пауза; на паузе — продолжаем с того же места.
-async function toggleVideoOn(node) {
-  const n = node && toRaw(node)
-  if (!n || n._videoBusy) return
+// Открывает поток файла и создаёт <video> БЕЗ запуска (нужно для перемотки до первого play).
+// Возвращает элемент или null. Одно видео за раз: чужой играющий плеер гасим.
+async function createVideoEl(n) {
+  if (n._videoEl) return n._videoEl
+  if (n._videoBusy) return null
   const path = videoPathOf(n)
-  if (!path) return
+  if (!path) return null
   if (videoNode && videoNode !== n) stopVideoOn(videoNode)   // одно видео за раз
-  const v = n._videoEl
-  if (v) {
-    if (v.paused) {
-      try { await v.play() } catch (e) { stopVideoOn(n); flash(t('videoPlayFail')) }
-    } else {
-      v.pause()
-    }
-    if (liteCanvas) liteCanvas.setDirty(true, true)
-    if (!videoRAF && n._videoEl && !n._videoEl.paused) videoTick()
-    return
-  }
-  // Новый плеер: сперва пропуск на файл (защищённый эндпоинт), затем поток в <video>.
   n._videoBusy = true
   let url = ''
   try {
@@ -3261,7 +3319,7 @@ async function toggleVideoOn(node) {
     url = j && j.status === 'ok' ? String(j.url || '') : ''
   } catch (e) {}
   n._videoBusy = false
-  if (!url) { flash(t('videoPlayFail')); return }
+  if (!url) { flash(t('videoPlayFail')); return null }
   const el = document.createElement('video')
   el.muted = false
   el.playsInline = true
@@ -3271,9 +3329,85 @@ async function toggleVideoOn(node) {
   videoNode = n
   el.onended = () => stopVideoOn(n)                        // досмотрели — снова постер
   el.onerror = () => { stopVideoOn(n); flash(t('videoPlayFail')) }
+  // Метаданные пришли — досылаем отложенную перемотку (клик по полосе до открытия потока).
+  el.addEventListener('loadedmetadata', () => {
+    if (n._videoEl === el && n._seekRatio != null && isFinite(el.duration) && el.duration > 0) {
+      try { el.currentTime = n._seekRatio * el.duration } catch (e) {}
+      if (liteCanvas) liteCanvas.setDirty(true, true)
+    }
+  })
+  return el
+}
+
+// Клик по карточке: нет плеера — включаем; играет — пауза; на паузе — продолжаем с того же места.
+async function toggleVideoOn(node) {
+  const n = node && toRaw(node)
+  if (!n || n._videoBusy) return
+  if (!videoPathOf(n)) return
+  const v = n._videoEl
+  if (v) {
+    if (v.paused) {
+      try { await v.play() } catch (e) { stopVideoOn(n); flash(t('videoPlayFail')) }
+    } else {
+      v.pause()
+    }
+    if (liteCanvas) liteCanvas.setDirty(true, true)
+    if (!videoRAF && n._videoEl && !n._videoEl.paused) videoTick()
+    return
+  }
+  const el = await createVideoEl(n)
+  if (!el) return
   try { await el.play() } catch (e) { stopVideoOn(n); flash(t('videoPlayFail')); return }
   if (!videoRAF) videoTick()
   if (liteCanvas) liteCanvas.setDirty(true, true)
+}
+
+// --- Полоса перемотки видео в карточке (Ярослав 08.11.26) ------------------------------------
+// Полоса видна вместе со значком ▶ только в ближнем плане (onDrawForeground). Мишень записывает
+// сама отрисовка (node._seekBar); клик/драг по ней ведёт позицию, play/pause при этом не трогаем.
+function seekBarNodeAt(gx, gy) {
+  if (!graph) return null
+  for (const n of (graph._nodes || [])) {
+    const b = n._seekBar
+    if (!b) continue
+    const lx = gx - n.pos[0], ly = gy - n.pos[1]
+    if (lx >= b.x && lx <= b.x + b.w && ly >= b.y && ly <= b.y + b.h) return n
+  }
+  return null
+}
+
+// Перемотать к доле полосы: сразу двигаем currentTime; нет потока — доля запомнится и применится,
+// когда придут метаданные (createVideoEl). Кадр перерисует ближайший setDirty.
+function seekVideoAt(n, localX) {
+  const b = n && n._seekBar
+  if (!b) return
+  const r = Math.max(0, Math.min(1, (localX - b.x) / b.w))
+  n._seekRatio = r
+  const v = n._videoEl
+  if (v && isFinite(v.duration) && v.duration > 0) {
+    try { v.currentTime = r * v.duration } catch (e) {}
+  }
+  if (liteCanvas) liteCanvas.setDirty(true, true)
+}
+
+// Начало перемотки: запоминаем жест и открываем поток БЕЗ запуска — видео встанет кадром.
+function videoSeekStart(node, canvas, localX) {
+  const n = node && toRaw(node)
+  if (!n || !n._seekBar) return
+  n._seekDrag = true
+  if (canvas) { canvas._ptClick = null; canvas._ptSeek = { id: n.id } }
+  seekVideoAt(n, localX)
+  const p = n._videoEl ? null : createVideoEl(n)   // поток откроется на паузе
+  if (p && p.catch) p.catch(() => {})
+}
+
+// Конец жеста перемотки (кнопку/палец отпустили или жест сорвался).
+function finishSeek(canvas) {
+  const c = canvas || liteCanvas
+  if (!c || !c._ptSeek) return
+  const n = graph && graph.getNodeById(c._ptSeek.id)
+  c._ptSeek = null
+  if (n) n._seekDrag = false
 }
 
 // --- Ссылка на файл: приложить (нативный диалог) и открыть -------------------
@@ -4627,6 +4761,16 @@ function saveAndCloseInspector(payload) {
   if (liteCanvas && liteCanvas.selectNode) liteCanvas.selectNode(null, false)   // снять и выделение на холсте
 }
 
+// Сохранение описания из полноэкранной читалки (Ярослав 08.11.26, кнопка «Правка» — только ПК):
+// пишем в карточку через ref (реактивность увидит и читалка, и панель), перерисовываем холст
+// и сохраняем граф — тот же жест, что «Сохранить» в панели карточки.
+function saveReaderDesc(text) {
+  if (readOnly.value || !descReaderNode.value) return
+  descReaderNode.value.description = String(text == null ? '' : text)
+  onNodeChange()
+  saveGraph()
+}
+
 // Кнопка «+⏰» в панели карточки (между «Сохранить» и «Удалить»): создаёт карточку-напоминание,
 // СВЯЗАННУЮ с редактируемой задачей — ставим её в свободное место справа и привязываем
 // родитель → напоминание (просьба Ярослава 01.10.26). Панель остаётся открытой на исходной
@@ -5083,7 +5227,8 @@ onBeforeUnmount(() => {
       <!-- Полноэкранная читалка описания: открывается кнопкой-лупой на карточке (телефон) -->
       <DescReader v-if="descReaderNode" :title="String(descReaderNode.title || '')"
                   :text="String(descReaderNode.description || '')" :lang="lang"
-                  @openlink="openUrl" @close="descReaderNode = null" />
+                  :editable="!IS_PHONE && !readOnly"
+                  @openlink="openUrl" @save="saveReaderDesc" @close="descReaderNode = null" />
 
       <div v-if="viewImage" class="img-modal" @click="viewImage = ''">
         <img :src="viewImage" alt="" />

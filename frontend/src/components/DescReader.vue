@@ -1,18 +1,21 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { L18N } from '../i18n.js'
 
-/* Читалка описания карточки — открывается кнопкой-лупой на карточке (телефон, ближний план).
+/* Читалка описания карточки — открывается кнопкой-лупой на карточке.
    Просьба Ярослава 05.10.26: полноэкранное окно «как в Telegram» — вверху название карточки и
    кнопка «назад» (видна всегда, даже при прокрутке), текст описания скроллится пальцем.
-   Компонент ТОЛЬКО читает: описание не правится (правка — в панели карточки по ПКМ).
+   08.11.26 (просьба Ярослава, ТОЛЬКО КОМПЬЮТЕР): в читалке можно поправить описание и сохранить —
+   кнопка «Правка» превращает текст в поле, «Сохранить» пишет в карточку (App.vue: saveReaderDesc),
+   «Отмена»/Esc возвращают чтение. На телефоне (editable=false) читалка остаётся только для чтения.
    Цвета — только переменные активной темы (см. styles.css), как у остальных панелей проекта. */
 const props = defineProps({
   title: { type: String, default: '' },
   text: { type: String, default: '' },
   lang: { type: String, default: 'ru' },
+  editable: { type: Boolean, default: false },   // правка — только на компьютере
 })
-const emit = defineEmits(['close', 'openlink'])
+const emit = defineEmits(['close', 'openlink', 'save'])
 
 function t(k) {
   const d = L18N[props.lang === 'en' ? 'en' : 'ru']
@@ -66,18 +69,64 @@ function onLink(url, ev) {
   ev.preventDefault()
   emit('openlink', url)
 }
+
+// --- Правка описания прямо в читалке (Ярослав 08.11.26, только ПК) ------------------------------
+const editing = ref(false)
+const draft = ref('')
+const taEl = ref(null)
+async function startEdit() {
+  draft.value = String(props.text || '')
+  editing.value = true
+  await nextTick()
+  if (taEl.value) {
+    taEl.value.focus()
+    try { taEl.value.setSelectionRange(draft.value.length, draft.value.length) } catch (e) {}
+    fitEdit()
+  }
+}
+function cancelEdit() { editing.value = false }
+function saveEdit() { emit('save', draft.value); editing.value = false }
+// Поле растёт под текст: скроллит тело читалки, а не сам textarea (одна привычная полоса).
+function fitEdit() {
+  const el = taEl.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = Math.max(Math.round(window.innerHeight * 0.6), el.scrollHeight) + 'px'
+}
+// Esc в поле — отменить правку, а не закрыть читалку (событие гасим, чтобы оконный слушатель
+// App.vue его не увидел). Ctrl+S — сохранить правку, как привычный жест.
+function onEditKey(ev) {
+  if (ev.key === 'Escape') { ev.stopPropagation(); cancelEdit(); return }
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === 's' || ev.key === 'ы')) { ev.preventDefault(); ev.stopPropagation(); saveEdit() }
+}
+// «Назад» во время правки сначала отменяет её — защита от случайной потери текста;
+// второе нажатие (или вне правки) закрывает читалку.
+function onBack() {
+  if (editing.value) { cancelEdit(); return }
+  emit('close')
+}
 </script>
 
 <template>
   <div class="reader">
     <div class="rd-head" :class="{ sep: scrolled }">
-      <button class="rd-back" @click="emit('close')">
-        <span class="arrow">‹</span>{{ t('readerBack') }}
-      </button>
+      <div class="rd-top">
+        <template v-if="editable">
+          <button v-if="!editing" class="rd-btn" @click="startEdit">{{ t('readerEdit') }}</button>
+          <template v-else>
+            <button class="rd-btn rd-save" @click="saveEdit">{{ t('readerSave') }}</button>
+            <button class="rd-btn" @click="cancelEdit">{{ t('readerCancel') }}</button>
+          </template>
+        </template>
+        <button class="rd-back" @click="onBack">
+          <span class="arrow">‹</span>{{ t('readerBack') }}
+        </button>
+      </div>
       <div class="rd-title">{{ title || t('label') }}<span class="rd-esc">{{ t('readerEsc') }}</span></div>
     </div>
     <div class="rd-body" @scroll="onScroll">
-      <div class="rd-text"><template v-for="(p, i) in parts" :key="i"><a v-if="p.a" :href="p.href" @click="onLink(p.href, $event)">{{ p.a }}</a><template v-else>{{ p.t }}</template></template></div>
+      <textarea v-if="editing" ref="taEl" class="rd-edit" v-model="draft" @input="fitEdit" @keydown="onEditKey"></textarea>
+      <div v-else class="rd-text"><template v-for="(p, i) in parts" :key="i"><a v-if="p.a" :href="p.href" @click="onLink(p.href, $event)">{{ p.a }}</a><template v-else>{{ p.t }}</template></template></div>
     </div>
   </div>
 </template>
@@ -94,14 +143,29 @@ function onLink(url, ev) {
   padding: 10px 14px 10px; border-bottom: 1px solid transparent; transition: border-color .15s;
 }
 .rd-head.sep { border-bottom-color: var(--panel-border); }
+/* Кнопки шапки — в один ряд справа: [Правка | Сохранить Отмена] и «Назад» (Ярослав 08.11.26). */
+.rd-top { display: flex; justify-content: flex-end; gap: 8px; }
 .rd-back {
-  align-self: flex-end; display: inline-flex; align-items: center; gap: 7px;
+  display: inline-flex; align-items: center; gap: 7px;
   min-height: 36px; padding: 4px 13px 4px 9px; cursor: pointer;
   font-family: inherit; font-size: 14px; font-weight: 600;
   background: var(--input-bg); color: var(--text);
   border: 1px solid var(--input-border); border-radius: var(--radius-sm);
 }
 .rd-back:active { border-color: var(--accent); }
+/* Кнопки правки (только ПК): тот же вид, что у «Назад»; «Сохранить» — акцентом темы. */
+.rd-btn {
+  display: inline-flex; align-items: center;
+  min-height: 36px; padding: 4px 13px; cursor: pointer;
+  font-family: inherit; font-size: 14px; font-weight: 600;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--input-border); border-radius: var(--radius-sm);
+}
+.rd-btn:active { border-color: var(--accent); }
+.rd-save {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: var(--primary-text); border-color: transparent;
+}
 /* Кнопка «назад» справа (просьба Ярослава 05.10.26): стрелка и подпись в одном порядке,
    меняется только сторона — заголовок карточки остаётся слева во всю ширину. */
 .rd-back .arrow { font-size: 19px; line-height: 1; margin-top: -2px; }
@@ -111,6 +175,18 @@ function onLink(url, ev) {
   padding: 12px 16px 32px; font-size: 15px; line-height: 1.55;
   white-space: pre-wrap; overflow-wrap: anywhere;   /* переносы строк автора описания сохраняем */
 }
+/* Поле правки (08.11.26): настоящий textarea в стиле полей панели карточки (фон и рамка —
+   из темы; при фокусе рамка акцентом). Высоту ведёт fitEdit по содержимому, скроллит тело
+   читалки — своя полоса не дублируется. */
+.rd-edit {
+  display: block; width: 100%; box-sizing: border-box; min-height: 60vh;
+  padding: 12px 14px 16px; font-family: inherit; font-size: 15px; line-height: 1.55;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--input-border); border-radius: var(--radius-sm);
+  outline: none; resize: none; overflow: hidden;
+  white-space: pre-wrap; overflow-wrap: anywhere; caret-color: var(--accent);
+}
+.rd-edit:focus { border-color: var(--accent); }
 /* Ссылки (1.10) — кликабельные, цветом активной темы; подчёркивание есть и без ховера,
    чтобы на телефоне было видно, что по тексту можно нажать. */
 .rd-text a {
@@ -127,5 +203,6 @@ function onLink(url, ev) {
   .rd-esc { display: inline; margin-left: 10px; font-size: 12px; font-weight: 600;
             color: var(--muted-foreground); }
   .rd-text { max-width: 780px; margin: 0 auto; font-size: 17px; line-height: 1.62; }
+  .rd-edit { max-width: 780px; margin: 0 auto; font-size: 17px; line-height: 1.62; }
 }
 </style>

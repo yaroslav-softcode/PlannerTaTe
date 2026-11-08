@@ -77,6 +77,8 @@ export const L18N = {
     calReveal: 'Показать на поле',
     delete: 'Удалить узел', connectFrom: 'Связать отсюда',
     readerBack: 'Назад',
+    // Правка описания в читалке (Ярослав 08.11.26) — кнопки на компьютере; телефон не меняется.
+    readerEdit: 'Правка', readerSave: 'Сохранить', readerCancel: 'Отмена',
     // Подсказка по карточкам — МАССИВОМ: в панели каждая комбинация выводится своей строкой
     // (03.10.26, просьба Ярослава: «разложи по строчкам»).
     selectHint: [
@@ -216,6 +218,7 @@ export const L18N = {
     calReveal: 'Show on canvas',
     delete: 'Delete node', connectFrom: 'Connect from here',
     readerBack: 'Back',
+    readerEdit: 'Edit', readerSave: 'Save', readerCancel: 'Cancel',
     selectHint: [
       'LMB — select a card',
       'RMB — edit a card',
