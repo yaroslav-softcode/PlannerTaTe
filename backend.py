@@ -898,6 +898,64 @@ def _graph_rev():
     return "r" + "-".join(parts)
 
 
+# --- Одно окно: вторая вкладка только смотрит (просьба Ярослава 14.11.26) --------------------
+# Причина: каждая вкладка держит свой граф в памяти и сохраняет его целиком. Два окна,
+# открытые одновременно, давали две «правды» — и связи/карточки переезжали друг на друга.
+# Теперь сервер выдаёт «аренду» первой вкладке; вторая получает отказ и переходит в просмотр.
+# Освобождение — при закрытии вкладки (release); страховка от зависшей аренды — 10 минут.
+_TAB_LOCK = threading.Lock()
+_TAB_STATE = {"id": "", "seen": 0.0}
+_TAB_STALE_SECONDS = 600.0
+
+
+def _tab_owner_stale(now):
+    """Аренда висит без подтверждений дольше страховки — считаем, что окно закрылось."""
+    return (not _TAB_STATE["id"]) or (now - _TAB_STATE["seen"]) > _TAB_STALE_SECONDS
+
+
+def _tab_claim(tid, force=False):
+    now = time.monotonic()
+    with _TAB_LOCK:
+        cur = _TAB_STATE["id"]
+        if cur and cur != tid and not force and not _tab_owner_stale(now):
+            return {"ok": False, "owner": cur, "age": round(now - _TAB_STATE["seen"], 1)}
+        _TAB_STATE["id"] = tid
+        _TAB_STATE["seen"] = now
+        return {"ok": True, "owner": tid, "age": 0.0}
+
+
+@app.route("/api/tab/claim", methods=["POST"])
+def api_tab_claim():
+    """Первая вкладка становится главной; вторая получает ok:false и режим просмотра."""
+    data = request.get_json(silent=True) or {}
+    tid = str(data.get("tab") or "").strip()[:64]
+    if not tid:
+        return jsonify({"status": "error", "error": "нужен tab"}), 400
+    return jsonify(_tab_claim(tid))
+
+
+@app.route("/api/tab/take", methods=["POST"])
+def api_tab_take():
+    """«Работать здесь»: это окно забирает аренду, прежнее станет только просмотром."""
+    data = request.get_json(silent=True) or {}
+    tid = str(data.get("tab") or "").strip()[:64]
+    if not tid:
+        return jsonify({"status": "error", "error": "нужен tab"}), 400
+    return jsonify(_tab_claim(tid, force=True))
+
+
+@app.route("/api/tab/release", methods=["POST"])
+def api_tab_release():
+    """Вкладка закрывается — аренда сразу свободна, чтобы новое окно не ждало."""
+    data = request.get_json(silent=True) or {}
+    tid = str(data.get("tab") or "").strip()[:64]
+    with _TAB_LOCK:
+        if _TAB_STATE["id"] and _TAB_STATE["id"] == tid:
+            _TAB_STATE["id"] = ""
+            _TAB_STATE["seen"] = 0.0
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/rev", methods=["GET"])
 def api_rev():
     """Версия графа на диске — крошечный ответ для авторазгрузки открытого окна.
@@ -905,8 +963,21 @@ def api_rev():
     Ключ доступа не проверяем: наружу не уходит ничего, кроме хеша файла (тот же режим,
     что у /api/load и /ping), а телефонный WebView этот путь не перехватывает — страница
     на телефоне просто получает 404 и не трогает свой граф.
+
+    14.11.26 (просьба Ярослава): здесь же «аренда» вкладки. Параметр ?tab=ID подтверждает,
+    что окно живо; ответ tabMine=false означает, что граф сейчас пишет другое окно — это
+    окно переходит в режим просмотра. Так два окна не могут одновременно менять связи.
     """
-    return jsonify({"rev": _graph_rev()})
+    tid = str(request.args.get("tab") or "").strip()[:64]
+    mine = True
+    if tid:
+        now = time.monotonic()
+        with _TAB_LOCK:
+            if _TAB_STATE["id"] == tid:
+                _TAB_STATE["seen"] = now
+            elif _TAB_STATE["id"] and not _tab_owner_stale(now):
+                mine = False
+    return jsonify({"rev": _graph_rev(), "tabMine": mine, "tabOwner": _TAB_STATE["id"]})
 
 
 @app.route("/api/load", methods=["GET"])

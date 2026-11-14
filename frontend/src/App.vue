@@ -1568,6 +1568,81 @@ const readOnly = ref(
   location.origin.indexOf('appassets.androidplatform.net') >= 0 ||
   localStorage.getItem('plannertate_readonly') === '1'
 )
+
+// ── Одно окно (14.11.26, просьба Ярослава) ──────────────────────────────────────────────────
+// Каждая вкладка держит граф в памяти и сохраняет его целиком: два окна = две «правды»,
+// из-за чего связи и карточки переезжали друг на друга. Сервер выдаёт «аренду» первой
+// вкладке; вторая открывается только для просмотра и показывает плашку с кнопкой
+// «Работать здесь» (тогда главной становится она, а прежнее окно — только просмотр).
+const isPhoneView = location.origin.indexOf('appassets.androidplatform.net') >= 0
+const tabId = (() => {
+  try {
+    const k = 'plannertate_tab_id'
+    let v = sessionStorage.getItem(k)
+    if (!v) {
+      v = Math.random().toString(36).slice(2) + Date.now().toString(36)
+      sessionStorage.setItem(k, v)
+    }
+    return v
+  } catch (e) { return 'tab-' + Math.random().toString(36).slice(2) }
+})()
+const tabNotice = ref(false)
+const tabBusy = ref(false)
+
+async function claimTab() {
+  if (isPhoneView) return
+  try {
+    const r = await fetch('/api/tab/claim', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tab: tabId })
+    })
+    const j = await r.json().catch(() => ({}))
+    if (j && j.ok === false) {
+      readOnly.value = true
+      tabNotice.value = true
+    }
+  } catch (e) { /* сервер недоступен — не блокируем работу */ }
+}
+
+async function takeTab() {
+  tabBusy.value = true
+  try {
+    const r = await fetch('/api/tab/take', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tab: tabId })
+    })
+    const j = await r.json().catch(() => ({}))
+    if (j && j.ok) {
+      readOnly.value = false
+      tabNotice.value = false
+      lastRev = null            // граф перечитаем заново — как после F5
+      if (graph && autoSaveArmed) armAutoSave()
+    }
+  } catch (e) { flash(t('saveFailed')) } finally { tabBusy.value = false }
+}
+
+// «Закрыть» в плашке: браузер закрывает вкладку, только если её открыли скриптом;
+// не вышло — просто убираем плашку, окно остаётся просмотром.
+function closeTabWindow() {
+  tabNotice.value = false
+  try { window.close() } catch (e) {}
+}
+
+// Это окно перестало быть главным (аренду забрало другое) — только просмотр.
+function tabLost() {
+  if (isPhoneView) return
+  readOnly.value = true
+  tabNotice.value = true
+}
+
+function releaseTab() {
+  if (isPhoneView) return
+  try {
+    navigator.sendBeacon('/api/tab/release',
+      new Blob([JSON.stringify({ tab: tabId })], { type: 'application/json' }))
+  } catch (e) {}
+}
+window.addEventListener('pagehide', releaseTab)
 // Только просмотр (сохранённая копия на телефоне/планшете): правка всё равно не сохраняется.
 // Ярослав 04.10.26: по «Сохранить/Удалить» (и остальным действиям) карточка просто ЗАКРЫВАЕТСЯ,
 // без уведомлений — и так видно, что менять нельзя, раз все поля неактивны.
@@ -4216,6 +4291,7 @@ let pendingSave = false
 // список обновляется: свои новые карточки вкладка «знает» и удалить их сможет.
 let baseIds = []
 async function saveGraph(silent = false) {
+  if (readOnly.value) return                     // вторая вкладка только смотрит — не пишет
   if (savingNow) { pendingSave = true; return }   // второй запрос не шлём — перезапишем после первого
   savingNow = true
   try {
@@ -4296,6 +4372,7 @@ function armAutoSave() {
 let lastSigCheck = 0
 function watchAutoSave() {
   if (!autoSaveArmed || !graph) return
+  if (readOnly.value) return                 // окно-просмотр не сохраняет
   const now = (typeof performance !== 'undefined' ? performance.now() : Date.now())
   if (now - lastSigCheck < 700) return
   lastSigCheck = now
@@ -4517,9 +4594,10 @@ let revBusy = false     // запрос в полёте — следующий �
 // правильно — на телефоне граф обновляет своя синхронизация, а не страница.
 async function fetchRev() {
   try {
-    const r = await fetch('/api/rev', { cache: 'no-store' })
+    const r = await fetch('/api/rev?tab=' + encodeURIComponent(tabId), { cache: 'no-store' })
     if (!r.ok) return null
     const j = await r.json()
+    if (j && j.tabMine === false) tabLost()   // аренду забрало другое окно — только просмотр
     return typeof j.rev === 'string' ? j.rev : null
   } catch (e) { return null }
 }
@@ -4915,8 +4993,9 @@ function animate() {
 }
 
 // Ждём, пока холст станет в layout, затем инициализируем LiteGraph (и поднимаем сохранённый граф).
-onMounted(() => {
+onMounted(async () => {
   applyTheme(themeName.value)          // тема ставится до initCanvas: холст сразу создаётся в ней
+  await claimTab()                     // одно окно: вторая вкладка сразу уходит в просмотр
   if (hadSavedTheme) pushThemeToServer(themeName.value)   // тему своего браузера отдаём телефону
   // Первый запуск после появления этой возможности: сервер темы ещё не знает — отдаём свою.
   fetch('/api/ui_state', { cache: 'no-store' }).then(r => r.json())
@@ -4958,6 +5037,17 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app" :class="{ ro: readOnly }">
+    <!-- Второе окно (14.11.26): граф только для просмотра, чтобы два окна не спорили за связи -->
+    <div v-if="tabNotice" class="tab-lock">
+      <div class="tab-lock-box">
+        <div class="tab-lock-title">{{ t('tabLockTitle') }}</div>
+        <p class="tab-lock-text">{{ t('tabLockText') }}</p>
+        <div class="tab-lock-actions">
+          <button class="btn primary" :disabled="tabBusy" @click="takeTab">{{ t('tabLockTake') }}</button>
+          <button class="btn" @click="closeTabWindow">{{ t('tabLockClose') }}</button>
+        </div>
+      </div>
+    </div>
     <!-- Сайдбар -->
     <aside class="side" :class="{ 'side-hidden': !sideOpen }">
       <div class="side-head">
@@ -5326,4 +5416,10 @@ canvas#canvasEl { width: 100%; height: 100%; display: block; touch-action: none;
 }
 .file-tip b { display: block; font-weight: 600; word-break: break-all; }
 .file-tip span { display: block; margin-top: 2px; font-size: 10px; color: var(--muted); word-break: break-all; }
+/* Второе окно (14.11.26): плашка «только просмотр» в стиле панелей приложения */
+.tab-lock { position: fixed; inset: 0; z-index: 100000; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.tab-lock-box { max-width: 540px; width: 100%; background: var(--panel-bg); border: 1px solid var(--panel-border); box-shadow: var(--panel-shadow); backdrop-filter: var(--panel-blur); border-radius: 16px; padding: 22px 24px; color: var(--text); }
+.tab-lock-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+.tab-lock-text { font-size: 14px; line-height: 1.45; color: var(--muted); margin: 0 0 18px; }
+.tab-lock-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 </style>
