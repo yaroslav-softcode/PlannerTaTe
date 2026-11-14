@@ -40,6 +40,10 @@ FRONTEND_DIR = APP_DIR / "frontend"
 SNAPSHOT_SCRIPT = FRONTEND_DIR / "workspace" / "snapshot_graph.mjs"
 PYTHON312 = r"C:\Users\Yar\AppData\Local\Programs\Python\Python312\python.exe"
 BACKUP_KEEP = 20
+# Границы диапазонов номеров (совпадают с backend.py): карточки/связи устройств живут выше,
+# компьютер и Гермес нумеруют ниже — так номера не пересекаются между источниками.
+PC_NODE_LIMIT = 1000000
+PC_LINK_LIMIT = 1000000
 
 mcp = MCPServer("plannertate")
 
@@ -119,6 +123,12 @@ def _save(g: dict, tag: str) -> str:
     инструмент backup_graph. tag оставлен для совместимости вызовов.
     """
     tmp = GRAPH_FILE.with_suffix(".json.tmp")
+    # Счётчик связей = максимум по факту (меньше 1 000 000 — диапазон компьютера). Если оставить
+    # last_link_id отстающим, следующая связь получит занятый номер и молча затрёт существующую.
+    links = g.get("links") or []
+    lids = [int(l[0]) for l in links
+            if isinstance(l, list) and l and int(l[0] or 0) < PC_LINK_LIMIT]
+    g["last_link_id"] = max(lids) if lids else 0
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(g, f, ensure_ascii=False, indent=2)
     os.replace(tmp, GRAPH_FILE)
@@ -224,12 +234,14 @@ def _free_spot(g: dict, near: str = "") -> list:
 
 def _new_node(g: dict, title: str, pos, *, kind="task", status="", color="", description="",
               due="", tags=None, remind_time="", repeat="once", channels=None) -> dict:
-    # Счётчик берём не только из last_node_id, но и из максимального id узлов: карточки,
-    # созданные телефоном/планшетом (диапазоны 1 000 000+ / 2 000 000+), счётчик компьютера
-    # НЕ поднимают (так задумано в backend.py), и без этой проверки новый id совпадал
-    # с телефонным — две карточки с одним номером (проверено 08.10.26: Hh.ru #1000055).
-    g["last_node_id"] = max([int(g.get("last_node_id", 0))]
-                            + [int(n.get("id") or 0) for n in g["nodes"]]) + 1
+    # Номер карточки — из «младшего» диапазона компьютера (меньше 1 000 000). Так номер новой
+    # карточки Гермеса никогда не совпадёт с номером карточки, которую в этот же момент создаёт
+    # открытое окно приложения (оно нумерует от максимума в графе) или телефон (у него свой
+    # диапазон 10 000 000+). Раньше брали max по всем узлам — и новая карточка Hermes могла
+    # получить номер только что приехавшей карточки телефона.
+    ids = [int(n.get("id") or 0) for n in g["nodes"]]
+    pc = [i for i in ids if i < PC_NODE_LIMIT]
+    g["last_node_id"] = (max(pc) if pc else 0) + 1
     order = max([int(n.get("order", 0)) for n in g["nodes"]] or [0]) + 1
     return {
         "id": g["last_node_id"], "type": "rectnode", "pos": list(pos), "size": [100, 56],
@@ -415,8 +427,26 @@ def link_tasks(from_task: str, to_task: str) -> str:
     for l in g["links"]:
         if (l[1] == a["id"] and l[3] == b["id"]) or (l[1] == b["id"] and l[3] == a["id"]):
             return f"Связь уже есть: {a['title']} ↔ {b['title']}."
-    g["last_link_id"] = int(g.get("last_link_id", 0)) + 1
-    lid = g["last_link_id"]
+    # Вход у карточки ОДИН. Если он занят другой связью, сначала снимаем её целиком
+    # (из links и из зеркал портов) — иначе новый номер писался в input поверх старого,
+    # и карточка «перепривязывалась» к чужой задаче, а старая связь оставалась висеть в links.
+    cur_in = (b.get("inputs") or [{}])[0].get("link")
+    if cur_in is not None:
+        old = next((l for l in g["links"] if l[0] == cur_in), None)
+        if old is not None:
+            g["links"] = [x for x in g["links"] if x[0] != cur_in]
+            src = next((n for n in g["nodes"] if n["id"] == old[1]), None)
+            if src is not None:
+                for p in src.get("outputs") or []:
+                    if isinstance(p.get("links"), list):
+                        p["links"] = [x for x in p["links"] if x != cur_in]
+        (b.get("inputs") or [{}])[0]["link"] = None
+    # Свободный номер — максимум по фактическим связям компьютера, а не last_link_id+1:
+    # счётчик в файле может отставать, и номер совпал бы с существующей связью (тогда она
+    # молча затиралась и линия «переезжала» на другую карточку).
+    lids = [int(l[0]) for l in g["links"] if int(l[0]) < PC_LINK_LIMIT]
+    lid = (max(lids) if lids else 0) + 1
+    g["last_link_id"] = lid
     g["links"].append([lid, a["id"], 0, b["id"], 0, "*"])
     # Зеркала портов. LiteGraph рисует стрелку по input.link у ПРИЁМНИКА
     # (drawConnections обходит node.inputs[].link) — раньше писали наоборот, и стрелка не появлялась.

@@ -641,6 +641,152 @@ GRAPH_SHRINK_MIN = 8            # на графе меньше столько к
 GRAPH_SHRINK_RATIO = 0.5        # автосохранение отклоняем, если карточек стало меньше половины
 
 
+# --- Номера связей и карточек: счётчики не должны отставать (14.11.26) ----------------------
+# Причина жалобы «карточка связалась с совсем другой»: LiteGraph выдаёт номер новой связи как
+# ++graph.last_link_id и НЕ проверяет, занят ли он. Страница присылает свой счётчик — он
+# отстаёт, если связи успели создать другое окно, телефон или MCP. /api/save писал счётчик
+# как есть, и следующая связь получала номер уже существующей, молча затирая её в
+# graph.links. Номера в портах (inputs[].link / outputs[].links) при этом оставались прежними —
+# линия рисовалась «от» одной карточки «к» совсем другой.
+# Правило: в файле счётчик ВСЕГДА равен максимуму по факту, а совпадение номера с другой
+# связью разруливается при сохранении: старая связь возвращается, новая получает свободный.
+def _plain_links(data):
+    """Список связей графа (LiteGraph хранит их объектом, в файле — массивом)."""
+    links = (data or {}).get("links")
+    if isinstance(links, dict):
+        links = list(links.values())
+    return links if isinstance(links, list) else []
+
+
+def _refresh_counters(data):
+    """last_node_id / last_link_id = максимум по факту (номера устройств не учитываем).
+
+    Без этого вкладка с устаревшим счётчиком создавала связь с занятым номером — и старая
+    связь исчезала под новой (найдено по живому графу 14.11.26: связь 364 «Изумрудный город →
+    Фонтан забвения» оказалась связью «Персонажи → Питомцы»).
+    """
+    nodes = (data or {}).get("nodes") or []
+    ids = [int(n.get("id") or 0) for n in nodes if int(n.get("id") or 0) < PHONE_ID_BASE]
+    data["last_node_id"] = max(ids) if ids else 0
+    lids = [int(l[0]) for l in _plain_links(data)
+            if isinstance(l, list) and l and int(l[0] or 0) < PC_LINK_LIMIT]
+    data["last_link_id"] = max(lids) if lids else 0
+    return data
+
+
+def _port_out_add(node, slot, lid):
+    """Дописать номер связи в выход узла (зеркало для отрисовки линии)."""
+    outs = node.get("outputs") or []
+    if not outs:
+        return
+    if slot < 0 or slot >= len(outs):
+        slot = 0
+    cur = outs[slot].get("links")
+    cur = list(cur) if isinstance(cur, list) else []
+    if lid not in cur:
+        cur.append(lid)
+    outs[slot]["links"] = cur
+
+
+def _port_out_swap(node, slot, old, new):
+    """Заменить номер связи в выходе узла (старый номер мог быть переиспользован)."""
+    outs = node.get("outputs") or []
+    if not outs:
+        return
+    if slot < 0 or slot >= len(outs):
+        slot = 0
+    cur = outs[slot].get("links")
+    cur = list(cur) if isinstance(cur, list) else []
+    cur = [new if x == old else x for x in cur]
+    if new not in cur:
+        cur.append(new)
+    outs[slot]["links"] = cur
+
+
+def _port_in_swap(node, slot, old, new):
+    """Заменить номер связи во входе узла — только в том слоте, куда она пришла."""
+    ins = node.get("inputs") or []
+    if 0 <= slot < len(ins) and ins[slot].get("link") == old:
+        ins[slot]["link"] = new
+
+
+def _fix_link_id_collisions(data):
+    """Один номер связи — две разные связи. Возвращает (data, сколько перенумеровано).
+
+    Присланный граф мог «проглотить» чужую связь: страница с устаревшим last_link_id дала
+    новой связи номер существующей, и в её памяти graph.links[номер] перезаписался. В портах
+    обеих карточек номер остался, в файле связь одна. Здесь возвращаем из файла связь, которую
+    затёрли (если оба конца живы), и выдаём новой свободный номер.
+    """
+    try:
+        with open(GRAPH_FILE, encoding="utf-8") as f:
+            disk = json.load(f)
+    except Exception:
+        return data, 0
+    disk_links = {}
+    for l in disk.get("links") or []:
+        if isinstance(l, list) and len(l) >= 5:
+            try:
+                disk_links[int(l[0])] = [int(l[0]), int(l[1]), int(l[2]), int(l[3]), int(l[4]),
+                                         l[5] if len(l) > 5 else "*"]
+            except (TypeError, ValueError):
+                continue
+    links = _plain_links(data)
+    nodes = {}
+    for n in data.get("nodes") or []:
+        try:
+            nodes[int(n.get("id"))] = n
+        except (TypeError, ValueError):
+            pass
+    used, final = set(), set()
+    for l in links:
+        if isinstance(l, list) and l:
+            try:
+                used.add(int(l[0]))
+            except (TypeError, ValueError):
+                pass
+    next_id = max([x for x in list(used) + [int(data.get("last_link_id") or 0)]
+                   if x < PC_LINK_LIMIT] or [0])
+    renamed = 0
+    out = []
+    for l in links:
+        if not (isinstance(l, list) and len(l) >= 5):
+            continue
+        try:
+            lid, o, oslot, t, tslot = int(l[0]), int(l[1]), int(l[2]), int(l[3]), int(l[4])
+        except (TypeError, ValueError):
+            continue
+        link = [lid, o, oslot, t, tslot, l[5] if len(l) > 5 else "*"]
+        dl = disk_links.get(lid)
+        if dl and (dl[1], dl[3]) != (o, t):
+            # Номер занят ДРУГОЙ связью: этой выдаём свободный, старую возвращаем из файла.
+            next_id += 1
+            new_id = next_id
+            src, dst = nodes.get(o), nodes.get(t)
+            if src is not None:
+                _port_out_swap(src, oslot, lid, new_id)
+            if dst is not None:
+                _port_in_swap(dst, tslot, lid, new_id)
+            link[0] = new_id
+            renamed += 1
+            used.discard(lid)
+            if lid not in final and dl[1] in nodes and dl[3] in nodes:
+                out.append(dl)
+                final.add(lid)
+                _port_out_add(nodes[dl[1]], dl[2], lid)
+                ins = nodes[dl[3]].get("inputs") or []
+                if 0 <= dl[4] < len(ins) and not ins[dl[4]].get("link"):
+                    ins[dl[4]]["link"] = lid
+        if link[0] in final:
+            continue
+        out.append(link)
+        final.add(link[0])
+    if renamed:
+        data["links"] = out
+        print("[граф] перенумеровано связей: %d (номера совпали с другими связями)" % renamed)
+    return data, renamed
+
+
 def _graph_node_count(data):
     n = (data or {}).get("nodes")
     return len(n) if isinstance(n, list) else 0
@@ -654,6 +800,7 @@ def _write_graph(data, force=False, tag="auto"):
     было. tag оставлен для совместимости вызовов (раньше попадал в имена копий).
     """
     try:
+        _refresh_counters(data)          # счётчики = максимум по факту (см. пояснение выше)
         new_n = _graph_node_count(data)
         if not force and os.path.exists(GRAPH_FILE):
             try:
@@ -802,11 +949,14 @@ def api_save():
                 pass
     data, added = _merge_phone_tasks(data)
     data, kept = _keep_foreign_nodes(data, base_ids)
+    # Номер связи мог совпасть с уже существующей (вкладка держала устаревший last_link_id):
+    # старую связь возвращаем, новую перенумеровываем — иначе линия «переезжает» на другую карточку.
+    data, renamed = _fix_link_id_collisions(data)
     ok, err = _write_graph(data, force=force)
     if not ok:
         return jsonify({"status": "error", "error": err}), 409
     _gc_image_blobs(data)
-    return jsonify({"status": "ok", "kept": kept, "rev": _graph_rev()})
+    return jsonify({"status": "ok", "kept": kept, "renamed": renamed, "rev": _graph_rev()})
 
 
 # --- Картинки карточек: отдельные файлы, не data-URL в графе (07.10.26) ---------------------
@@ -1238,14 +1388,17 @@ def api_restore():
         return jsonify({"status": "error", "error": "копия не найдена"}), 404
     try:
         with open(src, encoding="utf-8") as f:
-            json.load(f)                                  # копия должна быть валидным графом
+            restored = json.load(f)                       # копия должна быть валидным графом
+        # Счётчики копии могли отстать (её сделали до того, как появились новые связи):
+        # новые связи и карточки получили бы занятые номера. Пересчитываем по факту.
+        _refresh_counters(restored)
         safety = ""
         if os.path.exists(GRAPH_FILE):
             safety = "graph.json.bak_%s_before_restore" % time.strftime("%Y-%m-%d_%H%M%S")
             shutil.copy2(GRAPH_FILE, os.path.join(BASE_DIR, safety))
-        tmp = GRAPH_FILE + ".tmp"
-        shutil.copy2(src, tmp)
-        os.replace(tmp, GRAPH_FILE)                       # подмена одним движением
+        ok, err = _write_graph(restored, force=True, tag="restore")
+        if not ok:
+            return jsonify({"status": "error", "error": err}), 500
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
     print("[восстановление] граф заменён копией:", name, "| прежний сохранён как:", safety or "(нет)")
@@ -1263,9 +1416,11 @@ PHONE_TASKS_FILE = os.path.join(BASE_DIR, "phone_tasks.json")
 # новая карточка могла занять номер только что приехавшей задачи — и задача терялась при
 # слиянии (найдено тестом 06.10.26). Компьютер продолжает нумеровать с единицы, как раньше;
 # номера нигде не показываются — диапазоны нужны только для защиты от совпадений.
-PHONE_ID_BASE = 1000000     # телефон:  1 000 001, 1 000 002, ...
-TABLET_ID_BASE = 2000000    # планшет:  2 000 001, 2 000 002, ...
-DEV_LINK_BASE = 3000000     # связи, созданные вместе с задачами устройств
+PHONE_ID_BASE = 10000000    # телефон:  10 000 001, 10 000 002, ... (14.11.26 сдвинут с 1 000 000,
+                            # чтобы новые карточки телефона не пересекались с накопленными 1 000 xxx)
+TABLET_ID_BASE = 11000000   # планшет:  11 000 001, 11 000 002, ...
+DEV_LINK_BASE = 12000000    # связи, созданные вместе с задачами устройств
+PC_LINK_LIMIT = 1000000     # номер связи компьютера — только ниже этого значения (1..999 999)
 
 
 def _phone_tasks_load():
@@ -1315,9 +1470,29 @@ def _merge_phone_tasks(graph):
             continue
         extra = rec.get("links") if isinstance(rec, dict) else None
         fresh = False
-        if node.get("id") not in have:
+        nid = node.get("id")
+        # «Уже есть» — это только КАРТОЧКА С ТЕМ ЖЕ НАЗВАНИЕМ. Если номер занят другой
+        # карточкой (совпали диапазоны/счётчики), карточку телефона нельзя считать усвоенной:
+        # иначе она пропадает, а её связь прицепляется к чужой карточке (жалоба Ярослава 14.11.26).
+        clash = next((n for n in nodes if n.get("id") == nid), None)
+        if clash is not None and str(clash.get("title") or "") != str(node.get("title") or ""):
+            _base = TABLET_ID_BASE if int(nid or 0) >= TABLET_ID_BASE else PHONE_ID_BASE
+            _used = [int(n.get("id") or 0) for n in nodes
+                     if _base <= int(n.get("id") or 0) < _base + 1000000]
+            new_id = (max(_used) + 1) if _used else _base + 1
+            node["id"] = new_id
+            for l in extra or []:
+                if isinstance(l, list) and len(l) >= 4:
+                    if l[1] == nid:
+                        l[1] = new_id
+                    if l[3] == nid:
+                        l[3] = new_id
+            nid = new_id
+            print("[телефон] номер %s был занят другой карточкой — выдан %s: %s"
+                  % (key, nid, node.get("title", "")))
+        if nid not in have:
             nodes.append(node)
-            have.add(node.get("id"))
+            have.add(nid)
             fresh = True
         for l in extra or []:
             if isinstance(l, list) and l and l[0] not in have_link:
@@ -1349,7 +1524,9 @@ def _merge_phone_tasks(graph):
         _plain_lids = [int(v) for v in have_link if int(v) < DEV_LINK_BASE]
         if _plain_lids:
             graph["last_link_id"] = max([int(graph.get("last_link_id") or 0)] + _plain_lids)
-    if left != pending:
+    # Сравнение left != pending тут не работает: node — тот же объект, что в pending, и после
+    # перенумерации меняется в обоих словарях. Сохраняем всегда, когда что-то вставили.
+    if changed or left != pending:
         _phone_tasks_save(left)
     return graph, changed
 
