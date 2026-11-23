@@ -2984,6 +2984,7 @@ def api_hermes_attach():
 # ТОЛЬКО ЧТЕНИЕ (файлы видит, но не меняет) и кладёт ответ обратно в ленту. Задачи идут
 # по одной в очереди — Codex не любит параллельные запуски в одной папке.
 CODEX_CHAT_FILE = os.path.join(BASE_DIR, "codex_chat.jsonl")
+CODEX_FILES_DIR = os.path.join(BASE_DIR, "codex_files")   # вложения чата Codex (23.11.26)
 CODEX_CHAT_DIR = os.environ.get("PLANNERTATE_CODEX_DIR") or os.path.join(os.path.expanduser("~"), "Projects")
 _CODEX_CHAT_LOCK = threading.Lock()
 _CODEX_QUEUE = queue.Queue()
@@ -3022,6 +3023,25 @@ def _codex_chat_append(kind, text, **extra):
         return rec
 
 
+def _chat_file_text(path, limit=20000):
+    """Текст вложения для промпта Codex: песочница read-only не пускает его за пределы
+    рабочей папки (проверено 23.11.26 — и с --add-dir тоже), поэтому текстовые файлы
+    передаём содержимым. Бинарные — только именем и размером."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(limit * 4 + 4)
+    except Exception:
+        return ""
+    if b"\x00" in data[:4096]:
+        return ""
+    for enc in ("utf-8", "cp1251", "utf-16"):
+        try:
+            return data.decode(enc)[:limit]
+        except Exception:
+            continue
+    return ""
+
+
 def _codex_run_one(rec):
     """Один вопрос → один запуск Codex. Песочница read-only: файлы читает, но не меняет."""
     qid = rec.get("id")
@@ -3031,6 +3051,15 @@ def _codex_run_one(rec):
         return
     prompt = ("Ты помогаешь Ярославу с его проектами на этом компьютере. "
               "Отвечай по-русски, коротко и по делу.\n\n" + (rec.get("text") or ""))
+    if rec.get("file_name"):
+        prompt += ("\n[к сообщению приложен файл: %s | %s]" % (rec.get("file_name"),
+                                                             rec.get("file_path") or ""))
+        body = rec.get("file_text") or ""
+        if body:
+            prompt += ("\n--- содержимое файла %s ---\n%s\n--- конец файла ---"
+                       % (rec.get("file_name"), body))
+        else:
+            prompt += " (файл нетекстовый или слишком большой — доступны только имя и размер)"
     cmd = [exe, "exec", "--skip-git-repo-check", "--sandbox", "read-only",
            "--color", "never", prompt]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -3092,6 +3121,40 @@ def api_codex_chat():
             _CODEX_WORKER["started"] = True
             threading.Thread(target=_codex_worker, daemon=True).start()
     return jsonify({"status": "ok", "id": rec["id"]})
+
+
+@app.route("/api/codex/attach", methods=["POST"])
+def api_codex_attach():
+    """Файл из чата Codex (23.11.26): сохраняем в codex_files рядом с graph.json,
+    в ленте — запись с именем файла, Codex получает пометку с полным путём и может
+    прочитать файл (песочница read-only)."""
+    f = request.files.get("file")
+    if f is None or not str(f.filename or "").strip():
+        return jsonify({"status": "error", "error": "файл не получен"}), 400
+    text = str(request.form.get("text") or "").strip()
+    device = str(request.form.get("device") or "").strip() or "phone"
+    os.makedirs(CODEX_FILES_DIR, exist_ok=True)
+    name = _safe_file_name(f.filename)
+    base, ext = os.path.splitext(name)
+    path = os.path.join(CODEX_FILES_DIR, name)
+    n = 2
+    while os.path.exists(path):
+        path = os.path.join(CODEX_FILES_DIR, "%s (%d)%s" % (base, n, ext))
+        n += 1
+    f.save(path)
+    size = os.path.getsize(path)
+    rec = _codex_chat_append("user", text[:4000], device=device,
+                             file_name=os.path.basename(path),
+                             file_path=os.path.normpath(path),
+                             file_size=size,
+                             file_text=_chat_file_text(path))
+    _CODEX_QUEUE.put(rec)
+    with _CODEX_CHAT_LOCK:
+        if not _CODEX_WORKER["started"]:
+            _CODEX_WORKER["started"] = True
+            threading.Thread(target=_codex_worker, daemon=True).start()
+    print("[codex] вложение из чата: %s (%d байт)" % (os.path.basename(path), size))
+    return jsonify({"status": "ok", "id": rec["id"], "file": os.path.basename(path)})
 
 
 # --- Кнопка «Установить MCP на Hermes» (просьба Ярослава 06.10.26) ---------------------------
