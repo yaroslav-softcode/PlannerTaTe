@@ -63,6 +63,8 @@ Source: "THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 ; Файлы MCP-сервера (для кнопки «Установить MCP на Hermes», 06.10.26): кладём рядом с программой,
 ; чтобы комплект был полным даже без папки проекта. Сам сервер работает с боевым графом из %APPDATA%.
 Source: "mcp\plannertate_mcp.py"; DestDir: "{app}\mcp"; Flags: ignoreversion
+Source: "mcp\plannertate_mcp.exe"; DestDir: "{app}\mcp"; Flags: ignoreversion
+Source: "mcp\plannertate_mcp_standalone.py"; DestDir: "{app}\mcp"; Flags: ignoreversion
 Source: "mcp\hermes_chat_reply.py"; DestDir: "{app}\mcp"; Flags: ignoreversion
 
 [Icons]

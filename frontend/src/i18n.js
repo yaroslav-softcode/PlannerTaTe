@@ -132,7 +132,7 @@ export const L18N = {
     /* «Установить MCP на Codex» (23.11.26) */
     mcpCodexTitle: 'MCP для Codex',
     mcpCodexBtn: 'Установить MCP на Codex',
-    mcpCodexAbout: 'Codex (приложение OpenAI) читает MCP-серверы из своей папки настроек. Кнопка подключит планировщик сама — останется перезапустить Codex.',
+    mcpCodexAbout: 'MCP — «мост» между планировщиком и Codex: задачи, файлы и напоминания. Сервер работает сам, без Hermes и без Python; кнопка подключит его в один клик — после этого перезапустите Codex.',
     mcpCodexInstalled: 'Codex уже подключён к планировщику.',
     mcpCodexNotInstalled: 'Codex пока не подключён.',
     mcpCodexNoCodex: 'Codex не найден на этом компьютере.',
@@ -277,7 +277,7 @@ export const L18N = {
     /* Set up MCP for Codex (23.11.26) */
     mcpCodexTitle: 'MCP for Codex',
     mcpCodexBtn: 'Set up MCP for Codex',
-    mcpCodexAbout: 'Codex (the OpenAI app) reads MCP servers from its settings folder. This button connects the planner itself — just restart Codex afterwards.',
+    mcpCodexAbout: 'MCP is the bridge between the planner and Codex: tasks, files and reminders. The server runs on its own — no Hermes, no Python; this button connects it in one click, then restart Codex.',
     mcpCodexInstalled: 'Codex is already connected to the planner.',
     mcpCodexNotInstalled: 'Codex is not connected yet.',
     mcpCodexNoCodex: 'Codex was not found on this computer.',

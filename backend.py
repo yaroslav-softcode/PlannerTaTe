@@ -3285,6 +3285,21 @@ def _codex_toml_install(server, graph, py):
         f.write("".join(kept).rstrip("\n") + "\n" + block)
 
 
+def _codex_server_cmd():
+    """Чем запускать MCP-сервер для Codex: сначала АВТОНОМНЫЙ exe рядом с программой
+    (не нужны ни Hermes, ни Python), иначе — питон с MCP SDK и .py-файл.
+    Возвращает (список команды запуска, вид: 'exe' | 'python' | '')."""
+    for base in (PROG_DIR, os.path.join(os.path.expanduser("~"), "Projects", "PlannerTaTe"),
+                 RES_DIR, BASE_DIR):
+        exe = os.path.join(base, "mcp", "plannertate_mcp.exe")
+        if os.path.isfile(exe):
+            return [os.path.normpath(exe)], "exe"
+    py = _hermes_mcp_python()
+    if py:
+        return [py, _mcp_server_file()], "python"
+    return [], ""
+
+
 @app.route("/api/mcp/codex", methods=["GET", "POST"])
 def api_mcp_codex():
     """Статус и установка MCP-сервера plannertate в Codex (приложение OpenAI)."""
@@ -3292,18 +3307,21 @@ def api_mcp_codex():
     graph = os.path.normpath(GRAPH_FILE)
     exe = _codex_exe()
     py = _hermes_mcp_python()
+    launch, kind = _codex_server_cmd()
     cmd = ""
-    if exe and py:
-        cmd = ('"%s" mcp add %s --env PLANNERTATE_GRAPH="%s" -- "%s" "%s"'
-               % (exe, CODEX_MCP_NAME, graph, py, server))
+    if exe and launch:
+        cmd = ('"%s" mcp add %s --env PLANNERTATE_GRAPH="%s" -- %s'
+               % (exe, CODEX_MCP_NAME, graph, " ".join('"%s"' % a for a in launch)))
     info = {"status": "ok", "available": bool(exe), "exe": exe, "python": py,
-            "server": server, "graph": graph, "config": os.path.normpath(CODEX_CONFIG),
+            "kind": kind, "launch": launch, "server": server, "graph": graph,
+            "config": os.path.normpath(CODEX_CONFIG),
             "installed": _codex_mcp_installed(), "command": cmd}
     if request.method == "GET":
         return jsonify(info)
-    if not py:
+    if not launch:
         info.update({"ok": False,
-                     "detail": "не найден Python с MCP SDK (venv Hermes)"})
+                     "detail": "не найден ни автономный сервер (mcp/plannertate_mcp.exe), "
+                               "ни Python с MCP SDK"})
         return jsonify(info), 400
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     detail = ""
@@ -3313,7 +3331,7 @@ def api_mcp_codex():
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=60, creationflags=flags)
             r = subprocess.run([exe, "mcp", "add", CODEX_MCP_NAME, "--env",
-                                "PLANNERTATE_GRAPH=" + graph, "--", py, server],
+                                "PLANNERTATE_GRAPH=" + graph, "--"] + launch,
                                stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                encoding="utf-8", errors="replace", timeout=90,
                                creationflags=flags)

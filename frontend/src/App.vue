@@ -3582,6 +3582,11 @@ async function openMcpPanel() {
 // блок в ~/.codex/config.toml, затем показывает результат.
 const codexInfo = ref(null)
 const codexBusy = ref(false)
+const showMcpCodex = ref(false)
+async function openMcpCodexPanel() {
+  showMcpCodex.value = true
+  openCodexInfo()
+}
 async function openCodexInfo() {
   codexInfo.value = null
   try {
@@ -5198,6 +5203,8 @@ onBeforeUnmount(() => {
         <!-- «Установить MCP на Hermes» (06.10.26, просьба Ярослава): готовое сообщение с файлами —
              его копируют и отправляют Hermes, тот подключает сервер сам. -->
         <button class="btn" @click="openMcpPanel"><span class="emo mcp-girl" aria-hidden="true"></span> {{ t('mcpBtn') }}</button>
+        <!-- Отдельная кнопка MCP для Codex (23.11.26): свой сервер, автономный exe -->
+        <button class="btn" @click="openMcpCodexPanel"><span class="emo">🤖</span> {{ t('mcpCodexBtn') }}</button>
 
         <div class="foot-row">
           <button v-if="!readOnly" class="icon-btn" :title="t('backupTitle')" @click="makeBackup"><span class="emo">💾</span></button>
@@ -5318,19 +5325,27 @@ onBeforeUnmount(() => {
           <button v-if="mcpInfo && mcpInfo.text" class="phone-ask-yes" @click="copyMcpText">{{ t('mcpCopy') }}</button>
           <button class="phone-ask-later" @click="showMcp = false">{{ t('close') }}</button>
         </div>
-        <div class="mcp-sep"></div>
-        <div class="mcp-codex-head">{{ t('mcpCodexTitle') }}</div>
+      </div>
+    </div>
+
+    <!-- «Установить MCP на Codex»: ОТДЕЛЬНОЕ окно со своей кнопкой в панели (23.11.26).
+         Сервер — автономный exe, Hermes и Python на машине не нужны. -->
+    <div v-if="showMcpCodex" class="phone-ask-wrap" @click.self="showMcpCodex = false">
+      <div class="phone-ask mcp-ask">
+        <div class="phone-ask-q">{{ t('mcpCodexTitle') }}</div>
         <div class="mcp-status" :class="{ ok: codexInfo && codexInfo.installed }">
           {{ codexInfo == null ? t('mcpChecking')
              : (!codexInfo.available ? t('mcpCodexNoCodex')
                 : (codexInfo.installed ? t('mcpCodexInstalled') : t('mcpCodexNotInstalled'))) }}
         </div>
         <div class="mcp-about">{{ t('mcpCodexAbout') }}</div>
+        <pre v-if="codexInfo && codexInfo.command" class="mcp-text">{{ codexInfo.command }}</pre>
         <div class="phone-ask-btns">
           <button v-if="codexInfo && codexInfo.available" class="phone-ask-yes"
                   :disabled="codexBusy" @click="installCodexMcp">
             {{ codexBusy ? t('mcpCodexInstalling') : t('mcpCodexBtn') }}
           </button>
+          <button class="phone-ask-later" @click="showMcpCodex = false">{{ t('close') }}</button>
         </div>
       </div>
     </div>
@@ -5428,8 +5443,6 @@ onBeforeUnmount(() => {
 .mcp-status { font-size: 13px; color: #e08a3c; margin-bottom: 8px; }
 .mcp-status.ok { color: #7bc67b; }
 .mcp-about { font-size: 13px; line-height: 1.45; color: var(--muted, #99a0c0); margin-bottom: 10px; }
-.mcp-sep { border-top: 1px solid rgba(255, 255, 255, 0.14); margin: 16px 0 12px; }
-.mcp-codex-head { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
 /* Значок «Hermes» у кнопки MCP (06.10.26, просьба Ярослава): чёрно-белая «девочка» из логотипа
    Hermes. Цвет берём от текста кнопки (маска + currentColor) — читается в любой из тем. */
 .mcp-girl {
