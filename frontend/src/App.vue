@@ -1558,7 +1558,7 @@ watch(lang, (v) => {
   document.documentElement.lang = code        // и сама страница объявляет свой язык
 }, { immediate: true })
 // Язык уезжает серверу (30.10.26, просьба Ярослава): страница установки по QR и сообщение
-// «Установить MCP на Гермес» печатаются на языке компьютера. Тот же POST, что и у темы
+// «Установить MCP на Hermes» печатаются на языке компьютера. Тот же POST, что и у темы
 // (на телефоне pushThemeToServer молчит — язык компьютера с телефона не меняется).
 watch(lang, () => pushThemeToServer(themeName.value))
 // Только просмотр (04.10.26, просьба Ярослава): на телефоне/планшете открывается СОХРАНЁННАЯ копия
@@ -1829,7 +1829,7 @@ async function initCanvas() {
   armAutoSave()   // с этого момента любое изменение карточек сохраняется автоматически
 
   // Авторазгрузка окна (1.10): раз в 2,5 с сверяем версию графа на сервере — чтобы карточки,
-  // приехавшие с телефона/планшета/Гермесом, появлялись здесь сами, без F5.
+  // приехавшие с телефона/планшета/Hermes, появлялись здесь сами, без F5.
   setInterval(pollRemoteGraph, REV_POLL_MS)
 
   // Двойной щелчок по пустому месту — НИЧЕГО не создаётся (по карточке — подзадача, см. onDblClick).
@@ -3561,19 +3561,48 @@ const showPhoneAsk = ref(false)
 const installDevice = ref('phone')     // 'phone' | 'tablet' — какая панель установки открыта
 function openInstall(dev) { installDevice.value = dev === 'tablet' ? 'tablet' : 'phone'; showPhone.value = true }
 
-// --- «Установить MCP на Гермес» (06.10.26, просьба Ярослава) ---------------------------------
+// --- «Установить MCP на Hermes» (06.10.26, просьба Ярослава) ---------------------------------
 // Приложение не ставит MCP само: кнопка показывает готовое сообщение с путями к файлам —
-// его копируют и отправляют Гермесу, и тот всё устанавливает своим ходом.
+// его копируют и отправляют Hermes, и тот всё устанавливает своим ходом.
 const showMcp = ref(false)
 const mcpInfo = ref(null)
 async function openMcpPanel() {
   showMcp.value = true
   mcpInfo.value = null
+  openCodexInfo()
   try {
     const r = await fetch('/api/mcp/info')
     mcpInfo.value = await r.json()
   } catch (e) {
     mcpInfo.value = { installed: false, text: '', error: true }
+  }
+}
+// --- «Установить MCP на Codex» (23.11.26, просьба Ярослава) ----------------------------------
+// В отличие от Hermes, здесь приложение ставит сервер САМО: зовёт `codex mcp add` и пишет
+// блок в ~/.codex/config.toml, затем показывает результат.
+const codexInfo = ref(null)
+const codexBusy = ref(false)
+async function openCodexInfo() {
+  codexInfo.value = null
+  try {
+    const r = await fetch('/api/mcp/codex')
+    codexInfo.value = await r.json()
+  } catch (e) {
+    codexInfo.value = { available: false, installed: false, error: true }
+  }
+}
+async function installCodexMcp() {
+  if (codexBusy.value) return
+  codexBusy.value = true
+  try {
+    const r = await fetch('/api/mcp/codex', { method: 'POST' })
+    const j = await r.json()
+    codexInfo.value = j
+    flash(j.ok ? t('mcpCodexDone') : t('mcpCodexFail') + ' ' + (j.detail || ''))
+  } catch (e) {
+    flash(t('mcpCodexFail'))
+  } finally {
+    codexBusy.value = false
   }
 }
 async function copyMcpText() {
@@ -4580,7 +4609,7 @@ function applyGraphPayload(data) {
 }
 
 // --- Авторазгрузка окна (решение Ярослава 06.11.26, версия 1.10) ------------------
-// Карточка, созданная телефоном/планшетом (POST /api/task/add), Гермесом (MCP пишет
+// Карточка, созданная телефоном/планшетом (POST /api/task/add), Hermes (MCP пишет
 // graph.json напрямую) или второй вкладкой, появляется на сервере, а открытое окно держит
 // СВОЙ граф в памяти. Раньше это выглядело так: «окно не обновилось, я начинаю вводить —
 // и получается две разные версии карточек». Ярослав решил: окно обновляется само (как F5),
@@ -5166,8 +5195,8 @@ onBeforeUnmount(() => {
         <button class="btn" @click="openInstall('phone')"><span class="emo">📱</span> {{ t('phoneBtn') }}</button>
         <button class="btn" @click="openInstall('tablet')"><span class="emo">📟</span> {{ t('phoneBtnTab') }}</button>
 
-        <!-- «Установить MCP на Гермес» (06.10.26, просьба Ярослава): готовое сообщение с файлами —
-             его копируют и отправляют Гермесу, тот подключает сервер сам. -->
+        <!-- «Установить MCP на Hermes» (06.10.26, просьба Ярослава): готовое сообщение с файлами —
+             его копируют и отправляют Hermes, тот подключает сервер сам. -->
         <button class="btn" @click="openMcpPanel"><span class="emo mcp-girl" aria-hidden="true"></span> {{ t('mcpBtn') }}</button>
 
         <div class="foot-row">
@@ -5276,7 +5305,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- «Установить MCP на Гермес»: статус и готовое сообщение для Гермеса (06.10.26) -->
+    <!-- «Установить MCP на Hermes»: статус и готовое сообщение для Hermes (06.10.26) -->
     <div v-if="showMcp" class="phone-ask-wrap" @click.self="showMcp = false">
       <div class="phone-ask mcp-ask">
         <div class="phone-ask-q">{{ t('mcpTitle') }}</div>
@@ -5288,6 +5317,20 @@ onBeforeUnmount(() => {
         <div class="phone-ask-btns">
           <button v-if="mcpInfo && mcpInfo.text" class="phone-ask-yes" @click="copyMcpText">{{ t('mcpCopy') }}</button>
           <button class="phone-ask-later" @click="showMcp = false">{{ t('close') }}</button>
+        </div>
+        <div class="mcp-sep"></div>
+        <div class="mcp-codex-head">{{ t('mcpCodexTitle') }}</div>
+        <div class="mcp-status" :class="{ ok: codexInfo && codexInfo.installed }">
+          {{ codexInfo == null ? t('mcpChecking')
+             : (!codexInfo.available ? t('mcpCodexNoCodex')
+                : (codexInfo.installed ? t('mcpCodexInstalled') : t('mcpCodexNotInstalled'))) }}
+        </div>
+        <div class="mcp-about">{{ t('mcpCodexAbout') }}</div>
+        <div class="phone-ask-btns">
+          <button v-if="codexInfo && codexInfo.available" class="phone-ask-yes"
+                  :disabled="codexBusy" @click="installCodexMcp">
+            {{ codexBusy ? t('mcpCodexInstalling') : t('mcpCodexBtn') }}
+          </button>
         </div>
       </div>
     </div>
@@ -5380,12 +5423,14 @@ onBeforeUnmount(() => {
   color: var(--btn-text, #e8e8e8);
 }
 .phone-ask-later:hover { background: var(--btn-hover, rgba(127, 127, 127, 0.15)); }
-/* Окно «Установить MCP на Гермес» (06.10.26): шире обычного, текст сообщения — моноширинный */
+/* Окно «Установить MCP на Hermes» (06.10.26): шире обычного, текст сообщения — моноширинный */
 .mcp-ask { max-width: 640px; }
 .mcp-status { font-size: 13px; color: #e08a3c; margin-bottom: 8px; }
 .mcp-status.ok { color: #7bc67b; }
 .mcp-about { font-size: 13px; line-height: 1.45; color: var(--muted, #99a0c0); margin-bottom: 10px; }
-/* Значок «Гермес» у кнопки MCP (06.10.26, просьба Ярослава): чёрно-белая «девочка» из логотипа
+.mcp-sep { border-top: 1px solid rgba(255, 255, 255, 0.14); margin: 16px 0 12px; }
+.mcp-codex-head { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+/* Значок «Hermes» у кнопки MCP (06.10.26, просьба Ярослава): чёрно-белая «девочка» из логотипа
    Hermes. Цвет берём от текста кнопки (маска + currentColor) — читается в любой из тем. */
 .mcp-girl {
   display: inline-block; width: 1.15em; height: 1.15em; background: currentColor;

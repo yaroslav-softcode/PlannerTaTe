@@ -41,7 +41,7 @@ SNAPSHOT_SCRIPT = FRONTEND_DIR / "workspace" / "snapshot_graph.mjs"
 PYTHON312 = r"C:\Users\Yar\AppData\Local\Programs\Python\Python312\python.exe"
 BACKUP_KEEP = 20
 # Границы диапазонов номеров (совпадают с backend.py): карточки/связи устройств живут выше,
-# компьютер и Гермес нумеруют ниже — так номера не пересекаются между источниками.
+# компьютер и Hermes нумеруют ниже — так номера не пересекаются между источниками.
 PC_NODE_LIMIT = 1000000
 PC_LINK_LIMIT = 1000000
 
@@ -235,7 +235,7 @@ def _free_spot(g: dict, near: str = "") -> list:
 def _new_node(g: dict, title: str, pos, *, kind="task", status="", color="", description="",
               due="", tags=None, remind_time="", repeat="once", channels=None) -> dict:
     # Номер карточки — из «младшего» диапазона компьютера (меньше 1 000 000). Так номер новой
-    # карточки Гермеса никогда не совпадёт с номером карточки, которую в этот же момент создаёт
+    # карточки Hermes никогда не совпадёт с номером карточки, которую в этот же момент создаёт
     # открытое окно приложения (оно нумерует от максимума в графе) или телефон (у него свой
     # диапазон 10 000 000+). Раньше брали max по всем узлам — и новая карточка Hermes могла
     # получить номер только что приехавшей карточки телефона.
@@ -566,9 +566,9 @@ def snapshot() -> str:
     return f"Снимок графа: {out}"
 
 
-# --- Чат «Гермес» в мобильном приложении (06.10.26, просьба Ярослава) ------------------------
+# --- Чат «Hermes» в мобильном приложении (06.10.26, просьба Ярослава) ------------------------
 # Сообщения из приложения лежат в hermes_chat.jsonl рядом с graph.json. Агент отвечает
-# инструментом hermes_chat_reply — «кнопка Гермес» на телефоне получает ответ через MCP.
+# инструментом hermes_chat_reply — «кнопка Hermes» на телефоне получает ответ через MCP.
 def _chat_file() -> Path:
     return GRAPH_FILE.parent / "hermes_chat.jsonl"
 
@@ -595,14 +595,14 @@ def _chat_read(limit: int = 30) -> list:
 @mcp.tool()
 def hermes_chat_read(limit: int = 30) -> str:
     """Прочитать последние сообщения чата с Ярославом из мобильного приложения PlannerTaTe
-    (кнопка «Гермес» в приложении телефона). Сначала посмотри контекст — потом отвечай.
+    (кнопка «Hermes» в приложении телефона). Сначала посмотри контекст — потом отвечай.
     """
     items = _chat_read(limit)
     if not items:
         return "Чат пока пуст."
     out = []
     for r in items:
-        who = "Ярослав" if r.get("from") == "user" else "Гермес"
+        who = "Ярослав" if r.get("from") == "user" else "Hermes"
         line = "[%s] id=%s %s: %s" % (r.get("ts", ""), r.get("id"), who, r.get("text"))
         if r.get("file_name"):
             line += "\n[вложение: %s | %s]" % (r.get("file_name"), r.get("file_path") or "")
@@ -613,7 +613,7 @@ def hermes_chat_read(limit: int = 30) -> str:
 @mcp.tool()
 def hermes_chat_reply(text: str, reply_to: int = 0) -> str:
     """ОБЯЗАТЕЛЬНОЕ действие: отправить ответ Ярославу в чат мобильного приложения PlannerTaTe
-    (кнопка «Гермес»). Без этого вызова он ответ не увидит!
+    (кнопка «Hermes»). Без этого вызова он ответ не увидит!
     text — текст ответа (по-русски, коротко и по делу); reply_to можно не указывать.
     """
     text = (text or "").strip()

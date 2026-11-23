@@ -20,6 +20,8 @@ import secrets
 import socket
 import subprocess
 import hashlib
+import glob
+import shutil
 import threading
 import queue
 import urllib.request
@@ -883,7 +885,7 @@ def static_files(path):
 
 # --- Версия графа на диске (1.10, решение Ярослава 06.11.26) -------------------------
 # Открытое окно держит граф в памяти, а карточки приходят мимо него: телефон и планшет
-# пишут в phone_tasks.json (и в graph.json через /api/task/add), Гермес (MCP) правит
+# пишут в phone_tasks.json (и в graph.json через /api/task/add), Hermes (MCP) правит
 # graph.json напрямую, вторая вкладка сохраняет его же. Страница опрашивает ЭТУ подпись
 # и сама подтягивает свежий граф — нажимать F5 больше не нужно.
 def _graph_rev():
@@ -1238,7 +1240,7 @@ def ping():
 def _ui_lang():
     """Язык интерфейса компьютера ('en' | 'ru'). Фронтенд сообщает его серверу вместе с темой
     (POST /api/ui_state, поле lang), сервер хранит в ui_state.json. По этому языку печатаются
-    страница установки по QR и сообщение «Установить MCP на Гермес» (просьба Ярослава 30.10.26).
+    страница установки по QR и сообщение «Установить MCP на Hermes» (просьба Ярослава 30.10.26).
     Если язык ещё не сообщался — русский."""
     try:
         with open(UI_FILE, encoding='utf-8') as f:
@@ -2828,13 +2830,13 @@ def api_device_upload():
     return jsonify({"status": "ok", "saved": saved, "cards": cards})
 
 
-# --- Чат с Гермесом (просьба Ярослава 06.10.26) ---------------------------------------------
-# Кнопка «Гермес» в приложении телефона: сообщение уезжает на компьютер в файл hermes_chat.jsonl,
-# агент Гермес отвечает в тот же файл, приложение показывает ленту. Канал пробуждения агента —
+# --- Чат с Hermes (просьба Ярослава 06.10.26) ---------------------------------------------
+# Кнопка «Hermes» в приложении телефона: сообщение уезжает на компьютер в файл hermes_chat.jsonl,
+# агент Hermes отвечает в тот же файл, приложение показывает ленту. Канал пробуждения агента —
 # вебхук Hermes на этом же компьютере (мгновенно); если недоступен — сообщение дождётся ответа,
 # ничего не теряется. Секрет вебхука лежит файлом рядом с graph.json (в код не зашит).
 HERMES_CHAT_FILE = os.path.join(BASE_DIR, "hermes_chat.jsonl")
-HERMES_FILES_DIR = os.path.join(BASE_DIR, "hermes_files")   # вложения чата «Гермес» (06.10.26)
+HERMES_FILES_DIR = os.path.join(BASE_DIR, "hermes_files")   # вложения чата «Hermes» (06.10.26)
 HERMES_WEBHOOK_URL = os.environ.get("HERMES_WEBHOOK_URL", "http://127.0.0.1:8644/webhooks/plannertate-chat")
 _HERMES_LOCK = threading.Lock()
 
@@ -2883,13 +2885,13 @@ def _hermes_chat_append(kind, text, **extra):
 
 
 def _hermes_wake(rec):
-    """Разбудить Гермеса: POST на локальный вебхук Hermes — в фоне, чтобы телефону отвечали
+    """Разбудить Hermes: POST на локальный вебхук Hermes — в фоне, чтобы телефону отвечали
     мгновенно. Подпись — generic HMAC V2: hex HMAC-SHA256 от "<unix>.<body>"."""
     def run():
         try:
             secret = _hermes_webhook_secret()
             if not secret:
-                print("[гермес] секрет вебхука не задан — ответ придёт при следующем запуске")
+                print("[hermes] секрет вебхука не задан — ответ придёт при следующем запуске")
                 return
             wake_text = rec.get("text") or ""
             if rec.get("file_name"):
@@ -2906,15 +2908,15 @@ def _hermes_wake(rec):
                            hashlib.sha256).hexdigest()
             req.add_header("X-Webhook-Signature-V2", sig)
             urllib.request.urlopen(req, timeout=6).read()
-            print("[гермес] вебхук отправлен")
+            print("[hermes] вебхук отправлен")
         except Exception as e:
-            print("[гермес] вебхук не дошёл:", e)
+            print("[hermes] вебхук не дошёл:", e)
     threading.Thread(target=run, daemon=True).start()
 
 
 @app.route("/api/hermes/chat", methods=["GET", "POST"])
 def api_hermes_chat():
-    """Лента чата с Гермесом: POST — сообщение от телефона, GET — записи новее since=<id>."""
+    """Лента чата с Hermes: POST — сообщение от телефона, GET — записи новее since=<id>."""
     if request.method == "GET":
         try:
             since = int(request.args.get("since") or 0)
@@ -2934,7 +2936,7 @@ def api_hermes_chat():
 
 @app.route("/api/hermes/reply", methods=["POST"])
 def api_hermes_reply():
-    """Ответ Гермеса в чат (зовёт скрипт-мост hermes_chat_reply.py с этого компьютера)."""
+    """Ответ Hermes в чат (зовёт скрипт-мост hermes_chat_reply.py с этого компьютера)."""
     bad = _api_guard()
     if bad:
         return bad
@@ -2943,14 +2945,14 @@ def api_hermes_reply():
     if not text:
         return jsonify({"status": "error", "error": "пустой ответ"}), 400
     rec = _hermes_chat_append("hermes", text[:8000], reply_to=data.get("id"))
-    print("[гермес] ответ записан: id " + str(rec["id"]))
+    print("[hermes] ответ записан: id " + str(rec["id"]))
     return jsonify({"status": "ok", "id": rec["id"]})
 
 
 @app.route("/api/hermes/attach", methods=["POST"])
 def api_hermes_attach():
     """Файл из чата телефона (просьба Ярослава 06.10.26): сохраняем в hermes_files рядом
-    с graph.json, в ленте появляется запись с именем файла, а Гермес получает пометку
+    с graph.json, в ленте появляется запись с именем файла, а Hermes получает пометку
     с полным путём — он может прочитать файл инструментом hermes_chat_file."""
     f = request.files.get("file")
     if f is None or not str(f.filename or "").strip():
@@ -2972,25 +2974,144 @@ def api_hermes_attach():
                               file_path=os.path.normpath(path),
                               file_size=size)
     _hermes_wake(rec)
-    print("[гермес] вложение из чата: %s (%d байт)" % (os.path.basename(path), size))
+    print("[hermes] вложение из чата: %s (%d байт)" % (os.path.basename(path), size))
     return jsonify({"status": "ok", "id": rec["id"], "file": os.path.basename(path)})
 
 
-# --- Кнопка «Установить MCP на Гермес» (просьба Ярослава 06.10.26) ---------------------------
+# --- Чат «Codex» из мобильного приложения (просьба Ярослава 23.11.26) ------------------------
+# Вторая кнопка на телефоне рядом с «Hermes чат». Сообщение уезжает на компьютер в файл
+# codex_chat.jsonl, сервер приложения сам запускает Codex CLI (`codex exec`) в режиме
+# ТОЛЬКО ЧТЕНИЕ (файлы видит, но не меняет) и кладёт ответ обратно в ленту. Задачи идут
+# по одной в очереди — Codex не любит параллельные запуски в одной папке.
+CODEX_CHAT_FILE = os.path.join(BASE_DIR, "codex_chat.jsonl")
+CODEX_CHAT_DIR = os.environ.get("PLANNERTATE_CODEX_DIR") or os.path.join(os.path.expanduser("~"), "Projects")
+_CODEX_CHAT_LOCK = threading.Lock()
+_CODEX_QUEUE = queue.Queue()
+_CODEX_WORKER = {"started": False}
+
+
+def _codex_chat_load():
+    items = []
+    try:
+        with open(CODEX_CHAT_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(rec, dict) and rec.get("text"):
+                    items.append(rec)
+    except FileNotFoundError:
+        pass
+    return items
+
+
+def _codex_chat_append(kind, text, **extra):
+    with _CODEX_CHAT_LOCK:
+        items = _codex_chat_load()
+        nid = max([int(i.get("id") or 0) for i in items] + [0]) + 1
+        import datetime as _cdt
+        rec = {"id": nid, "ts": _cdt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+               "from": kind, "text": text}
+        rec.update(extra)
+        with open(CODEX_CHAT_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return rec
+
+
+def _codex_run_one(rec):
+    """Один вопрос → один запуск Codex. Песочница read-only: файлы читает, но не меняет."""
+    qid = rec.get("id")
+    exe = _codex_exe()
+    if not exe:
+        _codex_chat_append("codex", "Codex не найден на этом компьютере.", reply_to=qid)
+        return
+    prompt = ("Ты помогаешь Ярославу с его проектами на этом компьютере. "
+              "Отвечай по-русски, коротко и по делу.\n\n" + (rec.get("text") or ""))
+    cmd = [exe, "exec", "--skip-git-repo-check", "--sandbox", "read-only",
+           "--color", "never", prompt]
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        r = subprocess.run(cmd, cwd=CODEX_CHAT_DIR, stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=900, creationflags=flags)
+    except subprocess.TimeoutExpired:
+        _codex_chat_append("codex", "Codex не успел за 15 минут — задача прервана.", reply_to=qid)
+        return
+    except Exception as e:
+        _codex_chat_append("codex", "Не удалось запустить Codex: %s" % e, reply_to=qid)
+        return
+    out = (r.stdout or "").strip()
+    if r.returncode != 0:
+        tail = ((r.stderr or "") + "\n" + out).strip().splitlines()
+        msg = "\n".join(tail[-12:]) if tail else ("код " + str(r.returncode))
+        _codex_chat_append("codex", "Не получилось (код %d):\n%s" % (r.returncode, msg[:3000]),
+                           reply_to=qid)
+        return
+    if not out:
+        out = (r.stderr or "").strip() or "Пустой ответ Codex."
+    _codex_chat_append("codex", out[:8000], reply_to=qid)
+
+
+def _codex_worker():
+    while True:
+        rec = _CODEX_QUEUE.get()
+        try:
+            _codex_run_one(rec)
+        except Exception as e:
+            try:
+                _codex_chat_append("codex", "Ошибка: %s" % e, reply_to=rec.get("id"))
+            except Exception:
+                pass
+        finally:
+            _CODEX_QUEUE.task_done()
+
+
+@app.route("/api/codex/chat", methods=["GET", "POST"])
+def api_codex_chat():
+    """Лента чата с Codex: POST — сообщение от телефона, GET — записи новее since=<id>."""
+    if request.method == "GET":
+        try:
+            since = int(request.args.get("since") or 0)
+        except Exception:
+            since = 0
+        items = [i for i in _codex_chat_load() if int(i.get("id") or 0) > since]
+        return jsonify({"status": "ok", "items": items[-200:]})
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text") or "").strip()
+    if not text:
+        return jsonify({"status": "error", "error": "пустое сообщение"}), 400
+    rec = _codex_chat_append("user", text[:4000],
+                             device=(str(data.get("device") or "") or "phone"))
+    _CODEX_QUEUE.put(rec)
+    with _CODEX_CHAT_LOCK:
+        if not _CODEX_WORKER["started"]:
+            _CODEX_WORKER["started"] = True
+            threading.Thread(target=_codex_worker, daemon=True).start()
+    return jsonify({"status": "ok", "id": rec["id"]})
+
+
+# --- Кнопка «Установить MCP на Hermes» (просьба Ярослава 06.10.26) ---------------------------
 # Приложение НЕ ставит MCP само (решение Ярослава): кнопка показывает готовое сообщение
-# с путями к файлам — его копируют и отправляют Гермесу, а тот ставит сервер своим ходом.
+# с путями к файлам — его копируют и отправляют Hermes, а тот ставит сервер своим ходом.
 def _mcp_server_file():
     """Где лежит файл MCP-сервера: сначала РЯДОМ С ПРОГРАММОЙ (туда его кладёт установщик —
     именно этот путь показывается в сообщении: «куда поставилось, оттуда и подключаем»),
     затем репозиторий проекта, затем сборка."""
     repo = os.path.join(os.path.expanduser("~"), "PycharmProjects", "PlannerTaTe",
                         "mcp", "plannertate_mcp.py")
+    repo2 = os.path.join(os.path.expanduser("~"), "Projects", "PlannerTaTe",
+                         "mcp", "plannertate_mcp.py")
     for cand in (os.path.join(PROG_DIR, "mcp", "plannertate_mcp.py"),
+                 repo2,
                  repo,
                  os.path.join(RES_DIR, "mcp", "plannertate_mcp.py")):
         if os.path.isfile(cand):
             return os.path.normpath(cand)
-    return os.path.normpath(repo)          # ничего не нашли — покажем ожидаемый путь
+    return os.path.normpath(repo2)          # ничего не нашли — покажем ожидаемый путь
 
 
 def _hermes_home():
@@ -3005,7 +3126,7 @@ def _hermes_home():
 
 @app.route("/api/mcp/info", methods=["GET"])
 def api_mcp_info():
-    """Что показать в окне «Установить MCP на Гермес»: статус и готовое сообщение с путями."""
+    """Что показать в окне «Установить MCP на Hermes»: статус и готовое сообщение с путями."""
     import re as _re
     server = _mcp_server_file()
     graph = os.path.normpath(GRAPH_FILE)
@@ -3021,9 +3142,9 @@ def api_mcp_info():
             "Файл сервера: %s\n"
             "Работать он должен с моим графом: %s\n"
             "Зарегистрируй его в Hermes как MCP-сервер \"plannertate\" — чтобы у тебя появились "
-            "инструменты для моих задач, файлов и чата «Гермес».\n"
+            "инструменты для моих задач, файлов и чата «Hermes».\n"
             "\n"
-            "Затем настрой канал чата «Гермес» — без этого сообщения с телефона не будут тебя будить:\n"
+            "Затем настрой канал чата «Hermes» — без этого сообщения с телефона не будут тебя будить:\n"
             "1. Проверь, что платформа вебхуков включена и слушает порт 8644 (hermes webhook list "
             "подскажет; если ещё не включена — включи).\n"
             "2. Сгенерируй секрет вебхука — 64 знака hex (например, secrets.token_hex(32)).\n"
@@ -3031,19 +3152,19 @@ def api_mcp_info():
             "приложения) — им приложение подписывает каждое сообщение.\n"
             "4. Создай подписку Hermes ({text} и имена инструментов в промпте сохрани дословно):\n"
             "   hermes webhook subscribe plannertate-chat --deliver log --secret <СЕКРЕТ> "
-            "--prompt \"Пользователь прислал сообщение из чата «Гермес» приложения PlannerTaTe. "
+            "--prompt \"Пользователь прислал сообщение из чата «Hermes» приложения PlannerTaTe. "
             "Его текст: {text}. Посмотри контекст инструментом hermes_chat_read (MCP plannertate), "
             "ответь по-русски коротко и по делу. ОБЯЗАТЕЛЬНОЕ финальное действие — вызови инструмент "
             "hermes_chat_reply (MCP plannertate), иначе ответ не дойдёт до телефона.\"\n"
             "5. Перезапусти шлюз: hermes gateway restart.\n"
             "\n"
-            "Проверка: напиши сообщение в чат «Гермес» с телефона — ответ должен прийти за ~15 секунд.\n"
+            "Проверка: напиши сообщение в чат «Hermes» с телефона — ответ должен прийти за ~15 секунд.\n"
             "\n"
             "Если чат однажды перестанет отвечать: проверь, что hermes_webhook_secret.txt лежит "
             "рядом с graph.json и совпадает с секретом подписки. После чистой переустановки приложения "
             "данные пересоздаются — файл секрета надо восстановить." % (server, graph))
     # Английская версия сообщения (30.10.26, просьба Ярослава): при английском интерфейсе
-    # компьютера панель «Установить MCP на Гермес» отдаёт то же сообщение по-английски.
+    # компьютера панель «Установить MCP на Hermes» отдаёт то же сообщение по-английски.
     # Пути, команды и {text} — дословно как в русской версии.
     if _ui_lang() == 'en':
         text = ("Set up an MCP server for my PlannerTaTe app.\n"
@@ -3076,6 +3197,144 @@ def api_mcp_info():
                 "is recreated — the secret file must be restored." % (server, graph))
     return jsonify({"status": "ok", "installed": installed, "server": server,
                     "graph": graph, "hermes": hh, "text": text})
+
+
+# --- Кнопка «Установить MCP на Codex» (просьба Ярослава 23.11.26) ----------------------------
+# Codex (приложение OpenAI) хранит внешние MCP-серверы в ~/.codex/config.toml. В отличие от
+# кнопки для Hermes, эта СТАВИТ сервер сама: официальной командой `codex mcp add plannertate`,
+# а если CLI не найден — вписывает блок [mcp_servers.plannertate] в config.toml напрямую.
+# Пути и питон — те же, что у Hermes: файл сервера рядом с программой, граф — рабочий.
+CODEX_HOME = os.path.join(os.path.expanduser("~"), ".codex")
+CODEX_CONFIG = os.path.join(CODEX_HOME, "config.toml")
+CODEX_MCP_NAME = "plannertate"
+
+
+def _codex_exe():
+    """Где Codex: PATH → путь из его же config.toml (папка MSIX в WindowsApps) → общие места."""
+    p = shutil.which("codex")
+    if p:
+        return os.path.normpath(p)
+    marker = "OpenAI.Codex_"
+    try:
+        with open(CODEX_CONFIG, encoding="utf-8") as f:
+            # в TOML-строках пути бывают с экранированными бэкслешами («\\Program») — сравниваем как есть
+            s = f.read().replace("\\\\", "\\")
+        i = s.find(marker)
+        if i > 1:
+            start = s.rfind(":", 0, i) - 1                 # буква диска перед двоеточием
+            end = s.find("\\app\\resources", i)
+            if start > 0 and end > i:
+                cand = s[start:end + len("\\app\\resources")] + "\\codex.exe"
+                if os.path.isfile(cand):
+                    return os.path.normpath(cand)
+    except Exception:
+        pass
+    for pat in (os.path.join(os.environ.get("ProgramFiles") or r"C:\Program Files",
+                             "WindowsApps", "OpenAI.Codex_*", "app", "resources", "codex.exe"),
+                os.path.join(os.environ.get("LOCALAPPDATA") or "", "Programs",
+                             "*Codex*", "codex.exe")):
+        try:
+            hits = glob.glob(pat)
+        except Exception:
+            hits = []
+        if hits:
+            return os.path.normpath(hits[0])
+    return ""
+
+
+def _hermes_mcp_python():
+    """Питон с MCP SDK — тот же, которым Hermes запускает сервер plannertate."""
+    hh = _hermes_home()
+    if not hh:
+        return ""
+    for cand in (os.path.join(hh, "hermes-agent", "venv", "Scripts", "python.exe"),
+                 os.path.join(hh, "venv", "Scripts", "python.exe"),
+                 os.path.join(hh, "hermes-agent", "venv", "bin", "python")):
+        if os.path.isfile(cand):
+            return os.path.normpath(cand)
+    return ""
+
+
+def _codex_mcp_installed():
+    try:
+        with open(CODEX_CONFIG, encoding="utf-8") as f:
+            return ("[mcp_servers.%s]" % CODEX_MCP_NAME) in f.read()
+    except Exception:
+        return False
+
+
+def _codex_toml_install(server, graph, py):
+    """Запасной путь: вписать блок сервера прямо в config.toml (строки TOML — литеральные)."""
+    block = ("\n[mcp_servers.%s]\ncommand = '%s'\nargs = ['%s']\nstartup_timeout_sec = 60\n"
+             "\n[mcp_servers.%s.env]\nPLANNERTATE_GRAPH = '%s'\n"
+             % (CODEX_MCP_NAME, py, server, CODEX_MCP_NAME, graph))
+    try:
+        with open(CODEX_CONFIG, encoding="utf-8") as f:
+            s = f.read()
+    except FileNotFoundError:
+        s = ""
+    kept, skip = [], False
+    for ln in s.splitlines(keepends=True):
+        t = ln.strip()
+        if t.startswith("["):
+            skip = t.startswith("[mcp_servers.%s" % CODEX_MCP_NAME)
+        if not skip:
+            kept.append(ln)
+    os.makedirs(CODEX_HOME, exist_ok=True)
+    with open(CODEX_CONFIG, "w", encoding="utf-8") as f:
+        f.write("".join(kept).rstrip("\n") + "\n" + block)
+
+
+@app.route("/api/mcp/codex", methods=["GET", "POST"])
+def api_mcp_codex():
+    """Статус и установка MCP-сервера plannertate в Codex (приложение OpenAI)."""
+    server = _mcp_server_file()
+    graph = os.path.normpath(GRAPH_FILE)
+    exe = _codex_exe()
+    py = _hermes_mcp_python()
+    cmd = ""
+    if exe and py:
+        cmd = ('"%s" mcp add %s --env PLANNERTATE_GRAPH="%s" -- "%s" "%s"'
+               % (exe, CODEX_MCP_NAME, graph, py, server))
+    info = {"status": "ok", "available": bool(exe), "exe": exe, "python": py,
+            "server": server, "graph": graph, "config": os.path.normpath(CODEX_CONFIG),
+            "installed": _codex_mcp_installed(), "command": cmd}
+    if request.method == "GET":
+        return jsonify(info)
+    if not py:
+        info.update({"ok": False,
+                     "detail": "не найден Python с MCP SDK (venv Hermes)"})
+        return jsonify(info), 400
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    detail = ""
+    try:
+        if exe:
+            subprocess.run([exe, "mcp", "remove", CODEX_MCP_NAME], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=60, creationflags=flags)
+            r = subprocess.run([exe, "mcp", "add", CODEX_MCP_NAME, "--env",
+                                "PLANNERTATE_GRAPH=" + graph, "--", py, server],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=90,
+                               creationflags=flags)
+            detail = ((r.stdout or "") + (r.stderr or "")).strip()
+            if r.returncode != 0 and not detail:
+                detail = "код " + str(r.returncode)
+        if not _codex_mcp_installed():
+            _codex_toml_install(server, graph, py)
+            detail = detail or "записано в config.toml"
+    except Exception as e:
+        try:
+            _codex_toml_install(server, graph, py)
+            detail = "config.toml (CLI не сработал: %s)" % e
+        except Exception as e2:
+            info.update({"ok": False, "detail": ("%s / %s" % (e, e2))[:1000]})
+            return jsonify(info), 500
+    info["installed"] = _codex_mcp_installed()
+    info["ok"] = info["installed"]
+    info["detail"] = detail[:1000]
+    print("[codex] MCP: installed=%s detail=%s" % (info["installed"], detail[:200]))
+    return jsonify(info)
 
 
 # --- Лицензия / поддержка автора (03.10.26, просьба Ярослава) ------------------------------
