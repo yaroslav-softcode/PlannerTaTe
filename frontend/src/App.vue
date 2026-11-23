@@ -5204,7 +5204,7 @@ onBeforeUnmount(() => {
              его копируют и отправляют Hermes, тот подключает сервер сам. -->
         <button class="btn" @click="openMcpPanel"><span class="emo mcp-girl" aria-hidden="true"></span> {{ t('mcpBtn') }}</button>
         <!-- Отдельная кнопка MCP для Codex (23.11.26): свой сервер, автономный exe -->
-        <button class="btn" @click="openMcpCodexPanel"><span class="emo">🤖</span> {{ t('mcpCodexBtn') }}</button>
+        <button class="btn" @click="openMcpCodexPanel"><span class="emo mcp-codex-ico" aria-hidden="true"></span> {{ t('mcpCodexBtn') }}</button>
 
         <div class="foot-row">
           <button v-if="!readOnly" class="icon-btn" :title="t('backupTitle')" @click="makeBackup"><span class="emo">💾</span></button>
@@ -5450,6 +5450,15 @@ onBeforeUnmount(() => {
   vertical-align: -0.18em;
   -webkit-mask: url(/hermes-girl.png) center / contain no-repeat;
   mask: url(/hermes-girl.png) center / contain no-repeat;
+}
+/* Официальный значок приложения Codex у его кнопки MCP (23.11.26): взят из ресурсов
+   Codex (chatgpt-app-dark.ico), альфа-канал → маска. Один файл читается и на тёмной,
+   и на светлой теме — цвет берётся от текста кнопки, как у значка Hermes. */
+.mcp-codex-ico {
+  display: inline-block; width: 1.15em; height: 1.15em; background: currentColor;
+  vertical-align: -0.18em;
+  -webkit-mask: url(/codex-mark.png) center / contain no-repeat;
+  mask: url(/codex-mark.png) center / contain no-repeat;
 }
 .mcp-text {
   white-space: pre-wrap; word-break: break-word; text-align: left;
