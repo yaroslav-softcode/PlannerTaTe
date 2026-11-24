@@ -23,7 +23,7 @@ import threading
 import time
 from urllib.error import HTTPError
 from urllib.parse import unquote, urljoin, urlsplit
-from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 import zlib
 import uuid
 
@@ -167,8 +167,9 @@ class _SafeRedirect(_CheckedRedirect):
 
 def _open_url(request: Request, allowed):
     # Never inherit a requests session, browser cookies or a disabled TLS context.
+    # ProxyHandler({}) keeps the path direct, matching the updater.
     context = ssl.create_default_context()
-    opener = build_opener(HTTPSHandler(context=context), _CheckedRedirect(allowed))
+    opener = build_opener(ProxyHandler({}), HTTPSHandler(context=context), _CheckedRedirect(allowed))
     return opener.open(request, timeout=HTTP_TIMEOUT)
 
 
@@ -331,12 +332,21 @@ def fetch_readme(repo: str) -> tuple[str, str]:
             raise
         # Public raw HEAD follows the repository's default branch without using
         # the rate-limited API. Sources remain restricted to this exact repo.
-        raw = f'https://raw.githubusercontent.com/{OWNER}/{repo}/HEAD/README.md'
-        data, mime = _fetch_bytes(raw, lambda target: target == raw,
-                                 MAX_README_BYTES, 'text/plain')
-        if mime not in ('text/plain', 'text/markdown', 'application/octet-stream'):
-            raise ValueError('Unexpected public README content type')
-        return data.decode('utf-8-sig'), raw
+        last_error = None
+        for name in ('README.md', 'readme.md', 'Readme.md'):
+            raw = f'https://raw.githubusercontent.com/{OWNER}/{repo}/HEAD/{name}'
+            try:
+                data, mime = _fetch_bytes(raw, lambda target, expected=raw: target == expected,
+                                         MAX_README_BYTES, 'text/plain')
+            except HTTPError as error:
+                last_error = error
+                if error.code == 404:
+                    continue
+                raise
+            if mime not in ('text/plain', 'text/markdown', 'application/octet-stream'):
+                raise ValueError('Unexpected public README content type')
+            return data.decode('utf-8-sig'), raw
+        raise last_error or ValueError('README not found')
     payload = json.loads(data.decode('utf-8'))
     if not isinstance(payload, dict):
         raise ValueError('Invalid GitHub README response')

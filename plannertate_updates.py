@@ -30,7 +30,7 @@ from urllib.request import (HTTPSHandler, HTTPRedirectHandler, ProxyHandler,
 
 from flask import Blueprint, jsonify, redirect, request
 
-APP_VERSION = "1.12"
+APP_VERSION = "1.13"
 REPO = "yaroslav-softcode/PlannerTaTe"
 REPO_URL = f"https://github.com/{REPO}"
 _APP_REPOS = {
@@ -47,6 +47,11 @@ _VERSION = re.compile(r"v?([0-9]{1,8}(?:\.[0-9]{1,8}){1,3})\Z", re.ASCII)
 _DIGEST = re.compile(r"sha256:([0-9a-fA-F]{64})\Z", re.ASCII)
 _METADATA_GATES = {repo: threading.BoundedSemaphore(1)
                    for repo in (REPO, *[entry[0] for entry in _APP_REPOS.values()])}
+# When the last fetch of a repo started. A daemon thread wedged in DNS can hold
+# its gate forever; after the stale window we reclaim the slot instead of
+# disabling update checks until the process restarts.
+_GATE_STARTED = {}
+STALE_GATE_SECONDS = CHECK_TIMEOUT * 2
 
 
 class UpdateError(Exception):
@@ -163,7 +168,16 @@ def _latest_release(repo):
     # slot until it exits, so retries cannot create unbounded background work.
     gate = _METADATA_GATES[repo]
     if not gate.acquire(blocking=False):
-        raise UpdateError("network_busy")
+        started = _GATE_STARTED.get(repo)
+        if not started or time.monotonic() - started <= STALE_GATE_SECONDS:
+            raise UpdateError("network_busy")
+        try:
+            gate.release()          # the previous worker is wedged past its budget
+        except ValueError:
+            pass
+        if not gate.acquire(blocking=False):
+            raise UpdateError("network_busy")
+    _GATE_STARTED[repo] = time.monotonic()
     finished, outcome = threading.Event(), []
     deadline = time.monotonic() + CHECK_TIMEOUT
 
@@ -173,7 +187,11 @@ def _latest_release(repo):
         except Exception as exc:
             outcome.append(exc)
         finally:
-            gate.release()
+            _GATE_STARTED.pop(repo, None)
+            try:
+                gate.release()
+            except ValueError:      # slot was reclaimed as stale after a timeout
+                pass
             finished.set()
 
     try:
@@ -645,6 +663,36 @@ def _launch_helper(script):
         creationflags=0x00000200 | 0x08000000)
 
 
+def _prune_updates_dir(directory):
+    """Bounded cleanup: newest installer, recent logs, no stale partial files."""
+    try:
+        entries = [p for p in directory.iterdir() if p.is_file()]
+    except OSError:
+        return
+    now = time.time()
+    installers = sorted((p for p in entries if re.fullmatch(r"PlannerTaTe_Setup_[0-9.]+\.exe", p.name)),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in installers[1:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    for p in entries:
+        try:
+            if p.suffix == ".part" or p.suffix == ".ps1":
+                if now - p.stat().st_mtime > 7 * 86400:
+                    p.unlink()
+        except OSError:
+            pass
+    for pattern in ("*.helper.log", "*.inno.log", "*.result.json"):
+        logs = sorted(directory.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in logs[20:]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+
 class UpdateManager:
     def __init__(self, data_dir, installed_exe=None, on_exit=None):
         self.data_dir = Path(data_dir).resolve()
@@ -678,6 +726,17 @@ class UpdateManager:
             result = dict(self._status)
             result["can_install"] = target is not None and callable(self.on_exit)
             return result
+
+    def last_install(self):
+        """Receipt of the last installation attempt; never trusted for decisions."""
+        try:
+            data = json.loads((self.updates_dir / "last-result.json").read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        return {key: data.get(key) for key in
+                ("state", "error", "version", "installer_exit_code", "restarted", "timestamp")}
 
     def _fail(self, code):
         with self._lock:
@@ -797,6 +856,7 @@ class UpdateManager:
         part = None
         try:
             directory = _ensure_updates_dir(self.data_dir)
+            _prune_updates_dir(directory)
             target = directory / release.name
             part = directory / f"{release.name}.{uuid.uuid4().hex}.part"
             digest, prefix, downloaded = hashlib.sha256(), bytearray(), 0
@@ -807,7 +867,7 @@ class UpdateManager:
                 if content_length is not None and (not str(content_length).isascii() or
                         not str(content_length).isdigit() or int(content_length) != release.size):
                     raise UpdateError("size_mismatch")
-                if response.headers.get("Content-Encoding", "identity") not in ("", "identity"):
+                if response.headers.get("Content-Encoding", "identity").strip().lower() not in ("", "identity"):
                     raise UpdateError("invalid_encoding")
                 with part.open("xb") as stream:
                     while chunk := _read_chunk(response, CHUNK_SIZE, deadline):
@@ -888,7 +948,8 @@ def register_updates(app, data_dir, installed_exe=None, on_exit=None):
 
     @blueprint.get("/api/about")
     def about():
-        return jsonify(name="PlannerTaTe", repo_url=REPO_URL, **manager.status())
+        return jsonify(name="PlannerTaTe", repo_url=REPO_URL,
+                       last_install=manager.last_install(), **manager.status())
 
     @blueprint.get("/api/updates/status")
     def status():
