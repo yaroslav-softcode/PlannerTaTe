@@ -9,6 +9,7 @@ import ReminderList from './components/ReminderList.vue'
 import CalendarPanel from './components/CalendarPanel.vue'
 import ReminderPanel from './components/ReminderPanel.vue'
 import LicensePanel from './components/LicensePanel.vue'
+import AboutPanel from './components/AboutPanel.vue'
 import PhoneInstallPanel from './components/PhoneInstallPanel.vue'
 import RestorePanel from './components/RestorePanel.vue'
 import { installTouchSupport } from './touch.js'
@@ -2732,6 +2733,7 @@ function onCanvasMouseDown(ev) {
 // Слушаем на документе в фазе ПЕРЕХВАТА: событие не дойдёт до обработчиков холста, поэтому
 // LiteGraph не выделит и не потащит исходную карточку вместе с копированием.
 function onDocMouseDownCapture(ev) {
+  if (!IS_PHONE && showAbout.value) return
   if (ev.button !== 0 || !(ev.ctrlKey || ev.metaKey)) return
   if (!graph || !liteCanvas) return
   const [gx, gy] = screenToGraph(ev.clientX, ev.clientY)
@@ -3542,8 +3544,8 @@ async function attachDroppedFile(node, f) {
   pickFileLink(n, name)
 }
 
-// --- Лицензия / поддержка автора (03.10.26, просьба Ярослава) --------------------------------
-// Клик по логотипу открывает страницу поддержки. Кнопка «Лицензия» ведёт туда же, но сначала
+// Поддержка автора. На компьютере логотип открывает «О приложении» (24.11.26).
+// Кнопка поддержки и прежний сценарий телефона остаются без изменений.
 // человек выбирает оценку, а внизу панели видно сумму. Сумму DonationAlerts из ссылки НЕ принимает
 // (проверено 03.10.26: ни ?amount, ни ?sum, ни /nick/250 — страница всегда показывает свои 10 ₽),
 // поэтому сумма показывается в панели, а страница открывается как есть.
@@ -3551,6 +3553,33 @@ async function attachDroppedFile(node, f) {
 // в том числе после перезапуска сервера.
 const DONATE_URL = 'https://www.donationalerts.com/r/yaroslav_khmelev'
 const showLicense = ref(false)
+const showAbout = ref(false)
+// На телефоне прежнее действие не меняем: эта доработка — только для компьютера.
+function openAppInfo() {
+  if (IS_PHONE) { openDonate(); return }
+  showAbout.value = true
+}
+async function prepareDesktopUpdate() {
+  if (readOnly.value) return true
+  // Обычные saveGraph по-прежнему возвращают результат своего запроса. Только обновление
+  // ждёт всю цепочку pendingSave и сверяет снимок: правка могла ещё не попасть в автосохранение.
+  const until = Date.now() + 15000
+  while (Date.now() < until) {
+    if (!saveDrain) saveGraph(true)
+    const drain = saveDrain
+    if (!drain) return false
+    let timer
+    let result
+    try {
+      result = await Promise.race([drain.promise, new Promise(resolve => {
+        timer = setTimeout(() => resolve(null), Math.max(0, until - Date.now()))
+      })])
+    } finally { clearTimeout(timer) }
+    if (!result?.saved) return false
+    if (!saveDrain && !pendingSave && graphSnapshot() === result.snapshot) return true
+  }
+  return false
+}
 
 // --- Установка приложения на телефон (03.10.26, просьба Ярослава) ---------------------------
 // При первом запуске (файла ключа ещё не было) предлагаем поставить приложение на телефон;
@@ -3777,6 +3806,7 @@ async function openFileLink(path, node = null) {
 // Ctrl+V: картинка из буфера уходит в открытую карточку.
 // В текстовом поле пропускаем вставку только если в буфере есть ещё и обычный текст.
 function onPaste(ev) {
+  if (!IS_PHONE && showAbout.value) return
   // Карточка — как в deleteSelected: сначала Vue-реф (после ПКМ/панели), затем выделение самого
   // холста (после обычного ЛКМ: LiteGraph хранит выделенное в liteCanvas.selected_nodes, а реф
   // при ЛКМ не обновляется — только сбрасывается на пустом выделении).
@@ -4319,16 +4349,26 @@ function normalizeNode(n) { normalizeVec(n, 'pos'); normalizeVec(n, 'size') }
 // автоматически сохранялось».
 let savingNow = false      // защита от гонки: автосохранение может стартовать, пока идёт предыдущее
 let pendingSave = false
+let saveDrain = null       // общий результат цепочки; ждёт только prepareDesktopUpdate
 // Номера карточек, которые эта вкладка видела при загрузке (03.11.26). Сервер по ним понимает,
 // что пользователь удалил сам, а что создали другие (телефон, другая вкладка, MCP) уже ПОСЛЕ
 // загрузки, — и не даёт первому же автосохранению стереть чужое. После каждого сохранения
 // список обновляется: свои новые карточки вкладка «знает» и удалить их сможет.
 let baseIds = []
 async function saveGraph(silent = false) {
-  if (readOnly.value) return                     // вторая вкладка только смотрит — не пишет
-  if (savingNow) { pendingSave = true; return }   // второй запрос не шлём — перезапишем после первого
+  if (readOnly.value) return true                // вторая вкладка только смотрит — не пишет
+  if (savingNow) { pendingSave = true; return false } // второй запрос не шлём — перезапишем после первого
   savingNow = true
+  if (!saveDrain) {
+    let resolve
+    const promise = new Promise(done => { resolve = done })
+    saveDrain = { promise, resolve, saved: true }
+  }
+  const drain = saveDrain
+  let saved = false
+  let snapshot = ''
   try {
+    snapshot = graphSnapshot()
     const data = graph.serialize()
     if (Array.isArray(data.nodes)) data.nodes.forEach(normalizeNode)
     data.baseIds = baseIds      // что вкладка знала при загрузке — сервер не даст стереть чужое
@@ -4342,6 +4382,7 @@ async function saveGraph(silent = false) {
       const j = await res.json().catch(() => ({}))
       flash(t('saveRejected') + (j.error ? ': ' + j.error : ''))
     } else if (res.ok) {
+      saved = true
       // Сервер мог вернуть карточки, созданные после загрузки этой вкладки (телефон, другая
       // вкладка, MCP). В памяти вкладки их нет — увидеть их можно после перезагрузки страницы.
       const j = await res.json().catch(() => ({}))
@@ -4360,9 +4401,15 @@ async function saveGraph(silent = false) {
     // Об ошибке всё равно говорим — молча терять правки нельзя.
   } catch (e) { console.error(e); flash(t('saveFailed')) }
   finally {
+    drain.saved = drain.saved && saved
     savingNow = false
     if (pendingSave) { pendingSave = false; saveGraph(true) }
+    else {
+      saveDrain = null
+      drain.resolve({ saved: drain.saved, snapshot })
+    }
   }
+  return saved
 }
 
 // --- Автосохранение -----------------------------------------------------------
@@ -4969,6 +5016,11 @@ function flash(msg) {
 }
 
 window.addEventListener('keydown', (ev) => {
+  if (!IS_PHONE && showAbout.value) {
+    // Отключённая кнопка обновления может отдать фокус body: Escape всё равно закрывает окно.
+    if (ev.key === 'Escape') { ev.preventDefault(); showAbout.value = false }
+    return
+  }
   const inField = !!(ev.target && ev.target.matches && ev.target.matches('input,textarea,[contenteditable="true"]'))
   // Ярослав 23.10.26: отмена/повтор (Ctrl+Z / Ctrl+Y) и поиск (Ctrl+F). В поле ввода
   // Ctrl+Z отдаём браузеру — там своя отмена текста.
@@ -5085,8 +5137,10 @@ onBeforeUnmount(() => {
     <!-- Сайдбар -->
     <aside class="side" :class="{ 'side-hidden': !sideOpen }">
       <div class="side-head">
-        <!-- Название: левый клик — страница поддержки автора (03.10.26). Справа — кнопка лицензии. -->
-          <div class="logo" :title="t('licLogo')" @click="openDonate"><span class="lg-app">Planner</span><span class="lg-ma">Ta</span><span class="lg-te">Te</span></div>
+        <!-- Название: на ПК — «О приложении»; поведение телефона остаётся прежним. -->
+          <div class="logo" role="button" tabindex="0" :title="IS_PHONE ? t('licLogo') : (lang === 'en' ? 'About' : 'О приложении')"
+               :aria-label="IS_PHONE ? t('licLogo') : (lang === 'en' ? 'About PlannerTaTe' : 'О приложении PlannerTaTe')"
+               @click="openAppInfo" @keydown.enter.prevent="openAppInfo" @keydown.space.prevent="openAppInfo"><span class="lg-app">Planner</span><span class="lg-ma">Ta</span><span class="lg-te">Te</span></div>
           <button v-if="licenseDone === false" class="lic-btn" @click="showLicense = true">{{ t('licBtn') }}</button>
       </div>
 
@@ -5300,6 +5354,9 @@ onBeforeUnmount(() => {
       </div>
       <button class="am-create am-del" :disabled="readOnly" @click="areaDelete">{{ t('areaDelete') }}</button>
     </div>
+
+    <AboutPanel v-if="showAbout && !IS_PHONE" :lang="lang" :prepare-update="prepareDesktopUpdate"
+                @close="showAbout = false" @openlink="openUrl" />
 
     <!-- Окно первого запуска: предлагаем поставить приложение на телефон -->
     <div v-if="showPhoneAsk" class="phone-ask-wrap">

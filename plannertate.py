@@ -195,6 +195,14 @@ def main():
     qt = QtWidgets.QApplication(sys.argv)
     qt.setQuitOnLastWindowClosed(False)
 
+    # Flask handlers run outside Qt's UI thread; emit a queued signal to quit.
+    class UpdateExit(QtCore.QObject):
+        requested = QtCore.pyqtSignal()
+
+    update_exit = UpdateExit()
+    update_exit.requested.connect(qt.quit)
+    backend.desktop_updates.set_exit_callback(update_exit.requested.emit)
+
     ico = os.path.join(_base_dir(), "PlannerTaTe.ico")
     icon = (QtGui.QIcon(ico) if os.path.exists(ico)
             else qt.style().standardIcon(QtWidgets.QStyle.SP_ComputerIcon))

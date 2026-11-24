@@ -3544,6 +3544,14 @@ def api_open_url():
 
 
 
+# Desktop About, updates and author app screenshots are isolated from graph operations.
+from plannertate_updates import register_updates
+from app_catalog import register_catalog
+
+desktop_updates = register_updates(app, BASE_DIR, installed_exe=sys.executable if FROZEN else None)
+author_apps = register_catalog(app, BASE_DIR, RES_DIR)
+
+
 if __name__ == "__main__":
     _access_key()      # создаём/печатаем ключ доступа сразу при запуске
     import sys as _sys
