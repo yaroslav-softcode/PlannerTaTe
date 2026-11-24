@@ -131,6 +131,25 @@ def _port_busy(port):
 
 
 def main():
+    """Startup wrapper: a windowed exe has no console, so record crashes to a file."""
+    try:
+        return _main()
+    except SystemExit:
+        raise
+    except BaseException:
+        import traceback
+        try:
+            folder = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "PlannerTaTe")
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "startup_crash.log"), "a", encoding="utf-8") as stream:
+                stream.write("\n=== %s ===\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+                traceback.print_exc(file=stream)
+        except Exception:
+            pass
+        raise
+
+
+def _main():
     if len(sys.argv) > 1 and sys.argv[1] == "--pick-file":
         return _pick_file_mode()
 

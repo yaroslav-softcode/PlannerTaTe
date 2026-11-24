@@ -30,7 +30,7 @@ from urllib.request import (HTTPSHandler, HTTPRedirectHandler, ProxyHandler,
 
 from flask import Blueprint, jsonify, redirect, request
 
-APP_VERSION = "1.13"
+APP_VERSION = "1.14"
 REPO = "yaroslav-softcode/PlannerTaTe"
 REPO_URL = f"https://github.com/{REPO}"
 _APP_REPOS = {
@@ -623,13 +623,31 @@ try {
     # On installer/verification failure, relaunch the existing installation too.
     # A timed-out still-running app/installer is left alone, never duplicated.
     if ($appExited -and -not $installerActive) {
-        try {
-            $restartedProcess = Start-Process -FilePath $installedExe -WorkingDirectory $installDir -PassThru
-            $restartedProcess.Dispose()
-            $result.restarted = $true
-            Write-HelperLog 'application_restarted'
-        } catch {
-            $result.restart_error = 'restart_failed'
+        # A freshly replaced 50 MB exe can be briefly locked by antivirus: the first
+        # launch then dies at once. Retry a few times instead of leaving no app.
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                $restartedProcess = Start-Process -FilePath $installedExe -WorkingDirectory $installDir -PassThru
+                Start-Sleep -Milliseconds 2500
+                $stillRunning = $false
+                if ($null -ne $restartedProcess) {
+                    try { $stillRunning = -not [bool]$restartedProcess.HasExited } catch { $stillRunning = $true }
+                }
+                if ($stillRunning) {
+                    $restartedProcess.Dispose()
+                    $result.restarted = $true
+                    $result.restart_error = $null
+                    Write-HelperLog 'application_restarted'
+                    break
+                }
+                if ($null -ne $restartedProcess) { $restartedProcess.Dispose() }
+                $result.restart_error = 'restart_exited'
+            } catch {
+                $result.restart_error = 'restart_failed'
+            }
+            Start-Sleep -Seconds 2
+        }
+        if (-not $result.restarted) {
             if ($result.state -eq 'success') { $result.state = 'error'; $result.error = 'restart_failed' }
             Write-HelperLog 'restart_failed'
         }
