@@ -30,7 +30,7 @@ from urllib.request import (HTTPSHandler, HTTPRedirectHandler, ProxyHandler,
 
 from flask import Blueprint, jsonify, redirect, request
 
-APP_VERSION = "1.14"
+APP_VERSION = "1.15"
 REPO = "yaroslav-softcode/PlannerTaTe"
 REPO_URL = f"https://github.com/{REPO}"
 _APP_REPOS = {
@@ -673,11 +673,16 @@ def _launch_helper(script):
     # DETACHED_PROCESS (0x8) is NOT usable here: PowerShell fails to start without
     # a console and exits silently (verified 24.11.26). CREATE_NO_WINDOW keeps it
     # hidden and CREATE_NEW_PROCESS_GROUP detaches it from our console signals.
+    # PyInstaller marks its children with _PYI_* variables; if the restarted app
+    # inherits them it validates against the now-dead bootstrap and refuses to run
+    # ("Security validation failure: parent process has different executable").
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.upper().startswith("_PYI") and key.upper() != "_MEIPASS2"}
     return subprocess.Popen(
         [str(_powershell_path()), "-NoLogo", "-NoProfile", "-NonInteractive",
          "-ExecutionPolicy", "Bypass", "-File", str(script)],
         cwd=str(script.parent), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, shell=False, close_fds=True,
+        stderr=subprocess.DEVNULL, shell=False, close_fds=True, env=environment,
         creationflags=0x00000200 | 0x08000000)
 
 

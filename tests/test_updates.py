@@ -514,6 +514,20 @@ class UpdatesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.get_json()["error"], "update_not_ready")
 
+    def test_helper_does_not_inherit_pyinstaller_child_markers(self):
+        module = self.module()
+        ps1 = self.root / "update.ps1"
+        ps1.write_text("# noop", encoding="utf-8")
+        with patch.dict("os.environ", {"_PYI_APPLICATION_HOME_DIR": "C:/tmp/_MEI1",
+                                       "_PYI_PARENT_PROCESS_LEVEL": "1", "PLANNERTATE_KEEP": "yes"}), \
+             patch.object(module, "_powershell_path", return_value=Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")), \
+             patch.object(module.subprocess, "Popen") as spawn:
+            module._launch_helper(ps1)
+        environment = spawn.call_args.kwargs["env"]
+        self.assertNotIn("_PYI_APPLICATION_HOME_DIR", environment)
+        self.assertNotIn("_PYI_PARENT_PROCESS_LEVEL", environment)
+        self.assertEqual(environment.get("PLANNERTATE_KEEP"), "yes")
+
     def test_install_spawns_only_detached_powershell_then_defers_callback(self):
         module, manager, client, callback, exe = self.ready_fixture()
         fake_timer = Mock(name="fake_timer_no_exit")
