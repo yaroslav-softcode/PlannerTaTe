@@ -1,6 +1,6 @@
 # PlannerTaTe
 
-**Free private task planner where your plan is a map, not a list.** Tasks live as cards on an endless canvas, and you link them into a graph — so you can see what a project is made of, what depends on what, and what is in progress right now.
+**Free private task planner where your plan is a board, not a list.** Tasks live as cards on an endless canvas, and you link them into a graph — so you can see what a project is made of, what depends on what, and what is in progress right now.
 
 Windows desktop application + Android companion, connected over your own home network. Everything is stored locally: no cloud, no account, no telemetry. Phone sync works without the internet — over a Wi-Fi router or a cable.
 
