@@ -20,8 +20,8 @@ const TEXT = {
     restartNote: 'При обновлении приложение перезапустится. Задачи и настройки сохранятся.',
     author: 'Автор приложения', authorName: 'Ярослав Хмелев',
     authorInfo: 'Независимый разработчик PlannerTaTe, FAIR и Paste Pen.', thanks: 'Благодарить',
-    otherApps: 'Другие приложения автора', download: 'Скачать последнюю версию', github: 'GitHub',
-    fair: 'Free AI Reader — сокращает статьи, документы и тексты с помощью ИИ и читает их вслух. Поддерживает озвучку своим голосом, озвучку аудиокниг по голосам и сохранение аудио.',
+    otherApps: 'Другие приложения автора', download: 'Скачать последнюю версию', site: 'Сайт приложения', siteShort: 'Сайт', github: 'GitHub',
+    fair: 'Free AI Reader — сокращает статьи, документы и тексты с помощью ИИ и читает их вслух. Поддерживает озвучку своим голосом, озвучку электронных книг и сохранение аудио.',
     pastepen: 'Рисование поверх любых окон: заметки от руки, фигуры, текст и изображения. Удобно для объяснений, презентаций и работы со скриншотами.',
     screenshot: 'Скриншот приложения',
   },
@@ -41,17 +41,20 @@ const TEXT = {
     restartNote: 'The app will restart during the update. Your tasks and settings will be kept.',
     author: 'App author', authorName: 'Yaroslav Khmelev',
     authorInfo: 'Independent developer of PlannerTaTe, FAIR and Paste Pen.', thanks: 'Donate',
-    otherApps: 'More apps by the author', download: 'Download latest version', github: 'GitHub',
-    fair: 'Free AI Reader uses AI to condense articles, documents and text, then reads them aloud. Supports custom voices, audiobook narration with per-character voices, and saving audio.',
+    otherApps: 'More apps by the author', download: 'Download latest version', site: 'App website', siteShort: 'Website', github: 'GitHub',
+    fair: 'Free AI Reader uses AI to condense articles, documents and text, then reads them aloud. Supports custom voices, e-book narration and saving audio.',
     pastepen: 'Draw over any window: freehand notes, shapes, text and images. Useful for explanations, presentations and annotating screenshots.',
     screenshot: 'App screenshot',
   },
 }
 const lang = computed(() => props.lang === 'en' ? 'en' : 'ru')
 const t = k => TEXT[lang.value][k]
+const SITE_URL = 'https://plannertate.netlify.app/'
 const APPS = [
-  { id: 'fair', name: 'FAIR', subtitle: 'Free AI Reader', repo: 'https://github.com/yaroslav-softcode/FAIR' },
-  { id: 'pastepen', name: 'Paste Pen', subtitle: '', repo: 'https://github.com/yaroslav-softcode/paste-pen' },
+  { id: 'fair', name: 'FAIR', subtitle: 'Free AI Reader', repo: 'https://github.com/yaroslav-softcode/FAIR',
+    site: 'https://free-ai-reader.netlify.app/' },
+  { id: 'pastepen', name: 'Paste Pen', subtitle: '', repo: 'https://github.com/yaroslav-softcode/paste-pen',
+    site: 'https://pastepen-app.netlify.app/' },
 ]
 const panel = ref(null)
 const info = ref(null)
@@ -207,7 +210,9 @@ onBeforeUnmount(() => {
         </header>
         <div class="about-scroll">
           <div class="about-brand"><span>Planner</span><span class="about-ta">Ta</span><span class="about-te">Te</span></div>
-          <div class="about-version">{{ t('version') }} <strong>{{ version }}</strong><span>Windows</span></div>
+          <div class="about-version">{{ t('version') }} <strong>{{ version }}</strong>
+            <a class="about-version-site" :href="SITE_URL" target="_blank" rel="noopener noreferrer">{{ t('siteShort') }} ↗</a>
+          </div>
           <p class="about-description">{{ t('description') }}</p>
           <section class="about-updates" :aria-label="t('updates')">
             <h2>{{ t('updates') }}</h2>
@@ -246,7 +251,10 @@ onBeforeUnmount(() => {
               <div class="about-app-text">
                 <h3>{{ app.name }}</h3>
                 <p>{{ t(app.id) }}</p>
-                <a class="about-btn about-app-download" :href="`/api/apps/${app.id}/download`" target="_blank" rel="noopener noreferrer">{{ t('download') }} ↗</a>
+                <div class="about-app-links">
+                  <a class="about-btn about-app-download" :href="`/api/apps/${app.id}/download`" target="_blank" rel="noopener noreferrer">{{ t('download') }} ↗</a>
+                  <a class="about-btn about-app-site" :href="app.site" target="_blank" rel="noopener noreferrer">{{ t('site') }} ↗</a>
+                </div>
               </div>
             </article>
           </section>
@@ -274,7 +282,9 @@ onBeforeUnmount(() => {
 .about-te { background: linear-gradient(96deg,#2aabee,#229ed9); background-clip: text; -webkit-text-fill-color: transparent; }
 .about-version { display: flex; align-items: center; gap: 7px; margin-top: 9px; font-size: 13px; color: var(--muted); }
 .about-version strong { font-weight: 650; color: var(--text); }
-.about-version span { font-size: 11px; border: 1px solid var(--btn-border); border-radius: 5px; padding: 2px 6px; margin-left: 4px; }
+.about-version-site { font-size: 11px; border: 1px solid var(--btn-border); border-radius: 5px; padding: 2px 6px; margin-left: 4px;
+  color: var(--muted); text-decoration: none; }
+.about-version-site:hover { color: var(--text); border-color: var(--accent, #8168ff); }
 .about-description { margin: 9px 0 19px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 h2 { font-size: 13px; font-weight: 700; margin: 0 0 8px; }
 .about-updates { padding: 16px; background: var(--btn-bg); border: 1px solid var(--btn-border); border-radius: 11px; }
@@ -306,7 +316,8 @@ h2 { font-size: 13px; font-weight: 700; margin: 0 0 8px; }
 .about-app img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: contain; }
 .about-app h3 { font-size: 17px; line-height: 1.3; margin: 0 0 7px; }
 .about-app p { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 0 0 12px; }
-.about-app-download { font-size: 11px; padding: 8px 11px; }
+.about-app-download, .about-app-site { font-size: 11px; padding: 8px 11px; }
+.about-app-links { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 620px) {
   .about-overlay { padding: 10px; }
   .about-panel { max-height: calc(100dvh - 20px); border-radius: 12px; }

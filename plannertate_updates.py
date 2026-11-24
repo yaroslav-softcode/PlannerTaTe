@@ -30,7 +30,7 @@ from urllib.request import (HTTPSHandler, HTTPRedirectHandler, ProxyHandler,
 
 from flask import Blueprint, jsonify, redirect, request
 
-APP_VERSION = "2.2"
+APP_VERSION = "2.1"
 REPO = "yaroslav-softcode/PlannerTaTe"
 REPO_URL = f"https://github.com/{REPO}"
 _APP_REPOS = {
