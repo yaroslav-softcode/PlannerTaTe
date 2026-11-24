@@ -21,9 +21,9 @@ const TEXT = {
     author: 'Автор приложения', authorName: 'Ярослав Хмелев',
     authorInfo: 'Независимый разработчик PlannerTaTe, FAIR и Paste Pen.', thanks: 'Благодарить',
     otherApps: 'Другие приложения автора', download: 'Скачать последнюю версию', github: 'GitHub',
-    fair: 'Free AI Reader — сокращает статьи, документы и тексты с помощью ИИ и читает их вслух. Поддерживает озвучку своим голосом и сохранение аудио.',
+    fair: 'Free AI Reader — сокращает статьи, документы и тексты с помощью ИИ и читает их вслух. Поддерживает озвучку своим голосом, озвучку аудиокниг по голосам и сохранение аудио.',
     pastepen: 'Рисование поверх любых окон: заметки от руки, фигуры, текст и изображения. Удобно для объяснений, презентаций и работы со скриншотами.',
-    screenshot: 'Скриншот приложения', imageNote: 'Скриншоты обновляются из README на GitHub. Без интернета доступны сохранённые копии.',
+    screenshot: 'Скриншот приложения',
   },
   en: {
     title: 'About', close: 'Close', version: 'Version',
@@ -42,9 +42,9 @@ const TEXT = {
     author: 'App author', authorName: 'Yaroslav Khmelev',
     authorInfo: 'Independent developer of PlannerTaTe, FAIR and Paste Pen.', thanks: 'Donate',
     otherApps: 'More apps by the author', download: 'Download latest version', github: 'GitHub',
-    fair: 'Free AI Reader uses AI to condense articles, documents and text, then reads them aloud. Supports custom voices and saving audio.',
+    fair: 'Free AI Reader uses AI to condense articles, documents and text, then reads them aloud. Supports custom voices, audiobook narration with per-character voices, and saving audio.',
     pastepen: 'Draw over any window: freehand notes, shapes, text and images. Useful for explanations, presentations and annotating screenshots.',
-    screenshot: 'App screenshot', imageNote: 'Screenshots refresh from GitHub READMEs. Saved copies remain available offline.',
+    screenshot: 'App screenshot',
   },
 }
 const lang = computed(() => props.lang === 'en' ? 'en' : 'ru')
@@ -249,7 +249,6 @@ onBeforeUnmount(() => {
                 <a class="about-btn about-app-download" :href="`/api/apps/${app.id}/download`" target="_blank" rel="noopener noreferrer">{{ t('download') }} ↗</a>
               </div>
             </article>
-            <p class="about-note about-images-note">{{ t('imageNote') }}</p>
           </section>
         </div>
       </section>
@@ -308,7 +307,6 @@ h2 { font-size: 13px; font-weight: 700; margin: 0 0 8px; }
 .about-app h3 { font-size: 17px; line-height: 1.3; margin: 0 0 7px; }
 .about-app p { font-size: 12px; line-height: 1.6; color: var(--muted); margin: 0 0 12px; }
 .about-app-download { font-size: 11px; padding: 8px 11px; }
-.about-images-note { margin-top: 17px; }
 @media (max-width: 620px) {
   .about-overlay { padding: 10px; }
   .about-panel { max-height: calc(100dvh - 20px); border-radius: 12px; }
