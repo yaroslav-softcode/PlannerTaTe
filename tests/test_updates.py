@@ -526,6 +526,7 @@ class UpdatesTests(unittest.TestCase):
         environment = spawn.call_args.kwargs["env"]
         self.assertNotIn("_PYI_APPLICATION_HOME_DIR", environment)
         self.assertNotIn("_PYI_PARENT_PROCESS_LEVEL", environment)
+        self.assertEqual(environment.get("PYINSTALLER_RESET_ENVIRONMENT"), "1")
         self.assertEqual(environment.get("PLANNERTATE_KEEP"), "yes")
 
     def test_install_spawns_only_detached_powershell_then_defers_callback(self):

@@ -30,7 +30,7 @@ from urllib.request import (HTTPSHandler, HTTPRedirectHandler, ProxyHandler,
 
 from flask import Blueprint, jsonify, redirect, request
 
-APP_VERSION = "1.15"
+APP_VERSION = "1.16"
 REPO = "yaroslav-softcode/PlannerTaTe"
 REPO_URL = f"https://github.com/{REPO}"
 _APP_REPOS = {
@@ -678,6 +678,10 @@ def _launch_helper(script):
     # ("Security validation failure: parent process has different executable").
     environment = {key: value for key, value in os.environ.items()
                    if not key.upper().startswith("_PYI") and key.upper() != "_MEIPASS2"}
+    # Documented PyInstaller switch: the restarted onefile app must not treat our
+    # helper as its originating bootstrap (PyInstaller >= 6.22 validates the parent
+    # executable and otherwise dies with "Security validation failure").
+    environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     return subprocess.Popen(
         [str(_powershell_path()), "-NoLogo", "-NoProfile", "-NonInteractive",
          "-ExecutionPolicy", "Bypass", "-File", str(script)],
